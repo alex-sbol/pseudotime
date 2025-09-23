@@ -1,0 +1,71 @@
+﻿output_dir: ../results
+file_pattern: "obj{index:04d}_stain{channel}_real.tiff"
+indices: null
+
+channels:
+  actin: "Actin"
+  nucleus: "DAPI"
+  background: "background"
+  auxiliary:
+    yap: "YAP"
+
+environments:
+  env1:
+    name: "Environment 1"
+    root: ../Chip_1462_1_real
+  env2:
+    name: "Environment 2"
+    root: ../Chip_1476_1_real
+
+segmentation:
+  use_cellprofiler_masks: false
+  cell_min_area: 150
+  nucleus_min_area: 60
+  gaussian_sigma: 1.6
+  closing_radius: 4
+  watershed_compactness: 0.01
+
+signals:
+  corridor_threshold: 0.4
+  smooth_sigma: 2.0
+  density_window: 25
+
+period:
+  min_period_pixels: 60
+  max_period_pixels: 300
+  prominence: 0.05
+
+pseudotime:
+  bins: 20
+  reference_phase: null
+
+analysis:
+  variability_metric: "mad"
+  detect_threshold_quantile: 0.85
+
+visualization:
+  enabled: true
+  format: "png"
+
+model:
+  enabled: false
+  model_type: "topochip"
+  weights_path: ../topochip-flow-matching/model_weights/otcfm_topo_weights_step_145000.pt
+  use_ema: true
+  image_size: 256
+  base_channels: 32
+  num_res_blocks: 2
+  channel_mult: [1, 1, 2, 2, 2]
+  num_heads: 4
+  num_head_channels: -1
+  attention_downsample: [32]
+  dropout: 0.1
+  num_cond_channels: 2
+  use_cfg: true
+  cfg_strength: 1.0
+  num_integration_steps: 100
+  normalize_background: "per-image"
+  samples_per_env: 4
+  max_backgrounds: 32
+  device: null
+  output_format: "png"
