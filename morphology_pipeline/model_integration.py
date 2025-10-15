@@ -8,8 +8,10 @@ from .config import ModelConfig
 try:
     from .models.topochip import TopochipFlowGenerator
 except ImportError:  # pragma: no cover
-    TopochipFlowGenerator = None  # type: ignore
-
+    raise ImportError(
+        "TopoChipFlowGenerator requires extra dependencies. "
+        "Please install morphology_pipeline with the 'model' extra."
+    )
 
 def create_shape_generator(config: ModelConfig) -> Optional[TopochipFlowGenerator]:
     if not config.enabled:
