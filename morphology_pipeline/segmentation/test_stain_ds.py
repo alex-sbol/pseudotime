@@ -31,10 +31,3 @@ def reduce_cortical_actin(img_no_bg, cortical_and_outside_mask, dim_factor=0.5):
 
 # # One object, original look
 ds.display_object(2, stains='all', bg_norm=0.5)
-
-
-test = ds.dataframe.iloc[2]["path_actin"]  # channels-first
-test = plt.imread(test)
-cortical_and_outside_mask = find_cortical_mask(test)
-reduced_cortical_actin = reduce_cortical_actin(test, cortical_and_outside_mask, dim_factor=0.3)
-plt.imshow(reduced_cortical_actin.transpose(1,2,0))
