@@ -32,6 +32,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple, Union
 
+from cp_measure.bulk import get_core_measurements
+from cp_measure.bulk import get_core_measurements
+measurements = get_core_measurements()
+sizeshape_fn = measurements["sizeshape"]
+
 import numpy as np
 import pandas as pd
 import tifffile as tiff
@@ -151,8 +156,11 @@ class StainDataset:
             m = _FNAME_RE.match(f.name)
             if not m:
                 continue
+
             oid = int(m.group("obj"))
+
             chan = _canon_channel(m.group("chan"))
+
             d = idx.setdefault(oid, {})
             if chan in d:
                 duplicates.append((oid, chan, d[chan], f))
@@ -211,7 +219,58 @@ class StainDataset:
             print(f"[WARN] {missing_total} objects are missing one or more channels.")
 
         return cls(root=folder, index=idx, dataframe=df)
+    
+    def add_center_eccentricity(self) -> None:
+        """Add 'center' and 'eccentricity' columns to the dataframe."""
+        centers = []
+        eccentricities = []
+        for obj_id in self.dataframe.index:
+            try:
+                dapi_img = self.get_channel(obj_id, "dapi", as_uint8=False)
+                labels = (dapi_img > 0).astype(np.uint8)
+                props = sizeshape_fn(labels, None)
+                center_x = props['Center_X']
+                center_y = props['Center_Y']
+                eccentricity = props['Eccentricity']
+                centers.append((center_x, center_y))
+                eccentricities.append(eccentricity)
+            except Exception as e:
+                print(f"[WARN] Could not compute size/shape for obj {obj_id}: {e}")
+                centers.append((np.nan, np.nan))
+                eccentricities.append(np.nan)
 
+        self.dataframe['center'] = centers
+        self.dataframe['eccentricity'] = eccentricities
+
+    def add_corridor_ids(self, corridor_bboxes: List[Dict[str, int]]) -> None:
+        """Add 'corridor_ids' column to the dataframe based on provided corridor bounding boxes.
+
+        Parameters
+        ----------
+        corridor_bboxes : List[Dict[str, int]]
+            A list of dictionaries, each representing a corridor bounding box with keys 'id', 'y0', 'y1', 'x0', 'x1'.
+        """
+        corridor_ids = []
+        i = 0
+        for obj_id in self.dataframe.index:
+            centre = self.dataframe.at[obj_id, 'center'][2]
+            if np.isnan(centre[0]) or np.isnan(centre[1]):
+                corridor_ids.append(None)
+                continue
+            cy = centre[1]
+            i = 0
+            while i < len(corridor_bboxes):
+                bbox = corridor_bboxes[i]
+                if bbox['y0'] <= cy <= bbox['y1']:
+                    corridor_ids.append(bbox['id'])
+                    break
+                elif cy < bbox['y0']:
+                    corridor_ids.append(None)
+                    print(f"[WARN] Object {obj_id} center y={cy} proves objects are not ordered ")
+                    break
+                else:
+                    i += 1
+        self.dataframe['corridor_ids'] = corridor_ids
     # ------------- Introspection -------------
 
     def list_objects(self) -> List[int]:

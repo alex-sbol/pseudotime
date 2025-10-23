@@ -4,25 +4,28 @@ from typing import List, Dict, Tuple
 from skimage import filters, morphology, measure
 import pandas as pd
 
+from segmentation.stain_dataset import StainDataset
 from pseudotime import window_segments, descriptor_from_segments, slide_windows_with_matching
 from corridor_mask import deskew_with_hull, detect_corridors_via_hull
 
 def run_pipeline_and_save_csvs( cp_df, out_prefix: str,
-                                img: np.ndarray,
-                               x0_ref: int = None):
-    #TODO: look into pseudo.ipynb
+                                background: np.ndarray,
+                               x0_ref: int = None,
+                               folder: str = None):
 
+    SD = StainDataset.from_folder(folder)
+    SD.add_center_eccentricity()
     #TODO make them parameters
     m, L, stride, L_min = 2, 10, 1, 8 # spacing, length, stride, min len
 
-    rot_img, corr_mask, hull_mask, rot_deg = deskew_with_hull(img)
+    rot_img, corr_mask, hull_mask, rot_deg = deskew_with_hull(background)
+
+    #one corridor is a {id, y0, y1, x0, x1} dict
     corridors = detect_corridors_via_hull(corr_mask, hull_mask,
                                         row_cov_thresh_rel_hull=0.07,
                                         min_band_height=5, merge_gap_px=3)
 
-    # Here the example segment is calculated
-    
-
+    SD.add_corridor_ids(corridors)
     #TODO make a logic in case the starting point is specified
     if x0_ref is None:
         centers = [0.5*(c['y0'] + c['y1']) for c in corridors]
@@ -39,6 +42,7 @@ def run_pipeline_and_save_csvs( cp_df, out_prefix: str,
 
     # slide and match on all corridors
     all_windows = []
+
     for c in corridors:
         regs = slide_windows_with_matching(corr_mask, c, ref_desc,
                                         m=m, L=L, stride=stride, L_min=L_min,
@@ -47,13 +51,18 @@ def run_pipeline_and_save_csvs( cp_df, out_prefix: str,
 
     matched_windows = [R for R in all_windows if R['matched']]
 
+    #Now think how to better match cells to windows and output these results
+    #I am thinking of using dataframe funtionality and just return df and matched windows add extra columns if needed
+
+
     #TODO find all DAPI strains such that centre if mass is inside matched windows
     #TODO get like 20 of them
 
 
-
+    #TODO
     # Build the 4 CSVs
     # 6a) pseudotime_lines.csv — each used vertical line 
+    merged = []
     rows_lines = []
     for R in merged:
         for j, (x, y_top, y_end) in enumerate(R['segments']):
