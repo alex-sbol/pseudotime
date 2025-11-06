@@ -1,36 +1,10 @@
-
-"""
-stain_dataset.py
-=================
-Dataset + plotting utilities adapted to the original project's conventions,
-with a **simple folder scanner** as requested.
-
-Folder expectation:
-    The given folder contains TIFF files named like:
-        obj####_stain<Channel>_<Source>.tif[f]
-    Examples:
-        obj0007_stainbackground_real.tiff
-        obj0007_stainDAPI_fake.tif
-    The "<Source>" suffix is optional and ignored for indexing.
-
-Plotting behavior matches the original project's utils:
-- Per-channel normalization to [0,1] while keeping zeros at 0.
-- Composition is additive (no alpha):
-    RGB = BG*bg_norm  +  [YAP -> R, Actin -> G, DAPI -> B]
-
-API
----
-ds = StainDataset.from_folder("/path/to/folder", strict=True, drop_incomplete=False)
-ds.display_object(7, stains="all")
-ds.display_grid(7)
-"""
-
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple, Union
+import math
 
 from cp_measure.bulk import get_core_measurements
 from cp_measure.bulk import get_core_measurements
@@ -71,7 +45,7 @@ def _canon_channel(token: str) -> str:
     return out
 
 # ----------------------------
-# Normalization & composition (matching original project)
+# Normalization & composition
 # ----------------------------
 
 def _normalize_channelwise(arr: np.ndarray, ignore_zeros: bool = True) -> np.ndarray:
@@ -105,6 +79,34 @@ def _compose_topo_cells(arr01: np.ndarray, bg_norm: float = 0.4) -> np.ndarray:
     else:
         raise ValueError("Expected 3 or 4 channels for composition")
     return np.clip(np.round(to_plot * 255.0), 0, 255).astype(np.uint8)
+# ----------------------------
+# Helpers
+# ----------------------------
+def affine_like_skimage_no_resize(W: int, H: int, angle_deg: float) -> np.ndarray:
+    """
+    Build the 2x3 affine that matches skimage.transform.rotate(image, angle_deg, resize=False, center=None).
+    Convention: points are (x, y) == (col, row). Positive angle = CCW.
+    Uses center at ((W-1)/2, (H-1)/2), which is what skimage's warp math uses.
+    """
+    theta = math.radians(angle_deg)
+    c, s = math.cos(theta), math.sin(theta)
+    cx, cy = (W - 1) / 2.0, (H - 1) / 2.0
+
+    # Forward mapping (raw -> rotated):
+    # x' =  c*x - s*y + (1-c)*cx + s*cy
+    # y' =  s*x + c*y + (1-c)*cy - s*cx
+    M = np.array([[ c, -s, (1 - c) * cx + s * cy],
+                  [ s,  c, (1 - c) * cy - s * cx]], dtype=float)
+    return M
+
+
+def apply_affine_points(M: np.ndarray, pts_xy: np.ndarray) -> np.ndarray:
+    """pts_xy: (N,2) of (x,y). Returns (N,2)."""
+    hom = np.c_[pts_xy, np.ones((pts_xy.shape[0], 1), dtype=pts_xy.dtype)]
+    return hom @ M.T
+
+
+
 
 # ----------------------------
 # Dataset
@@ -374,6 +376,30 @@ class StainDataset:
         for ax, img, name in zip(axes, imgs, names):
             ax.imshow(img, interpolation=interpolation); ax.set_title(name); ax.axis("off")
         fig.suptitle(f"obj {obj_id}"); plt.show()
+
+    def rotate_centers_like_skimage(self,
+                                img_shape: Tuple[int, int],
+                                angle_deg: float,
+                                out_col: str = "center_rot"):
+        """Add rotated centers column matching your deskew rotation."""
+        H, W = img_shape
+        M = affine_like_skimage_no_resize(W, H, angle_deg)
+        cp_df = self.dataframe
+        idxs, pts = [], []
+        for idx, v in cp_df["center"].items():
+            xy = None #TODO
+            if xy is None:
+                continue
+            idxs.append(idx); pts.append(xy)
+        if not pts:
+            cp_df[out_col] = None
+            return
+
+        pts = np.asarray(pts, dtype=float)
+        pts_rot = apply_affine_points(M, pts)
+
+        for i, idx in enumerate(idxs):
+            cp_df.at[idx, out_col] = (float(pts_rot[i, 0]), float(pts_rot[i, 1]))
 
 # Convenience
 def build_dataframe(folder: Union[str, Path], *, strict: bool = True, drop_incomplete: bool = False) -> pd.DataFrame:

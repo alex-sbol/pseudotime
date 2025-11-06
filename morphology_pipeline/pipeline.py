@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Tuple
 from skimage import filters, morphology, measure
 import pandas as pd
+from bisect import bisect_left
 
 from segmentation.stain_dataset import StainDataset
 from pseudotime import window_segments, descriptor_from_segments, slide_windows_with_matching
@@ -51,8 +52,6 @@ def run_pipeline_and_save_csvs( cp_df, out_prefix: str,
 
     matched_windows = [R for R in all_windows if R['matched']]
 
-    #Now think how to better match cells to windows and output these results
-    #I am thinking of using dataframe funtionality and just return df and matched windows add extra columns if needed
 
 
     #TODO find all DAPI strains such that centre if mass is inside matched windows
@@ -61,7 +60,7 @@ def run_pipeline_and_save_csvs( cp_df, out_prefix: str,
 
     #TODO
     # Build the 4 CSVs
-    # 6a) pseudotime_lines.csv — each used vertical line 
+    # 6a) pseudotime_lines.csv — each used vertical line
     merged = []
     rows_lines = []
     for R in merged:
@@ -119,3 +118,54 @@ def run_pipeline_and_save_csvs( cp_df, out_prefix: str,
                                  ecc_mean=np.nan, ecc_median=np.nan, ecc_q25=np.nan, ecc_q75=np.nan))
     df_ecc = pd.DataFrame(rows_ecc)
     df_ecc.to_csv(f"{out_prefix}_ecc_summary.csv", index=False)
+
+
+    
+    #---------------- Helpers ----------------
+    def _prep_window(win):
+        """
+        Prepare sorted arrays for a window's segments.
+        Expects segments as iterable of (x, y_top, y_bot).
+        """
+        segs = win.get('segments') or []
+        if len(segs) == 0:
+            return None
+        xs = np.asarray([s[0] for s in segs], dtype=float)
+        yt = np.asarray([s[1] for s in segs], dtype=float)
+        yb = np.asarray([s[2] for s in segs], dtype=float)
+        order = np.argsort(xs)
+        xs, yt, yb = xs[order], yt[order], yb[order]
+        # estimate step (m) from median Δx if available
+        m = float(np.median(np.diff(xs))) if len(xs) > 1 else 1.0
+        return xs, yt, yb, m
+
+
+    def _contains_point_in_window(cx: float, cy: float, xs: np.ndarray, yt: np.ndarray, yb: np.ndarray, m_est: float) -> bool:
+        """
+        Test if (cx,cy) is inside the vertical envelope of the window, using
+        linear interpolation between neighbor segments. Guard against large gaps.
+        """
+        if cx < xs[0] - 0.75 * m_est or cx > xs[-1] + 0.75 * m_est:
+            return False
+
+        i = bisect_left(xs, cx)
+        if i == 0:
+            # near left edge: accept only if close enough to first column
+            if (cx - xs[0]) > 0.75 * m_est:
+                return False
+            y_top, y_bot = yt[0], yb[0]
+        elif i == len(xs):
+            # near right edge
+            if (xs[-1] - cx) > 0.75 * m_est:
+                return False
+            y_top, y_bot = yt[-1], yb[-1]
+        else:
+            # between xs[i-1] and xs[i]; reject if the gap is too large
+            if (xs[i] - xs[i-1]) > 1.5 * m_est:
+                return False
+            x0, x1 = xs[i-1], xs[i]
+            t = (cx - x0) / (x1 - x0) if x1 != x0 else 0.0
+            y_top = yt[i-1] + t * (yt[i] - yt[i-1])
+            y_bot = yb[i-1] + t * (yb[i] - yb[i-1])
+
+        return (y_top <= cy <= y_bot)

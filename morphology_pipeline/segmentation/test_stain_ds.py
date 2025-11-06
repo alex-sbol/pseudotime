@@ -62,4 +62,14 @@ print(ds.dataframe.head())
 
 ds.add_center_eccentricity()
 
-print(ds.dataframe[['center', 'eccentricity']].head())
+c = ds.dataframe.loc[2]['center']
+
+arr = ds.get_channel(2, "dapi", as_uint8=False)
+labels = (arr > 0).astype(np.uint8)
+plt.figure(figsize=(6, 6))
+plt.imshow(labels, cmap="nipy_spectral")
+plt.title(f"Labels (N={arr.max()})")
+plt.axis("off")
+
+plt.scatter([c[0]], [c[1]], color='red', s=1, label='Center of Mass')
+plt.show()
