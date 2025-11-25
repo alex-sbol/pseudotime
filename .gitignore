@@ -31,3 +31,4 @@ coverage.xml
 # OS artifacts
 .DS_Store
 Thumbs.db
+dump.json

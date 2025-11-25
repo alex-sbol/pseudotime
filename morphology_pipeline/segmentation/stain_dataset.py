@@ -7,7 +7,6 @@ from typing import Dict, List, Sequence, Tuple, Union
 import math
 
 from cp_measure.bulk import get_core_measurements
-from cp_measure.bulk import get_core_measurements
 measurements = get_core_measurements()
 sizeshape_fn = measurements["sizeshape"]
 
@@ -255,7 +254,7 @@ class StainDataset:
         corridor_ids = []
         i = 0
         for obj_id in self.dataframe.index:
-            centre = self.dataframe.at[obj_id, 'center'][2]
+            centre = self.dataframe.at[obj_id, 'center']
             if np.isnan(centre[0]) or np.isnan(centre[1]):
                 corridor_ids.append(None)
                 continue

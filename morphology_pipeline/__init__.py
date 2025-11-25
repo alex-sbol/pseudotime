@@ -1,5 +1,5 @@
-﻿"""Top-level package for the modular morphology analysis pipeline."""
+﻿# """Top-level package for the modular morphology analysis pipeline."""
 
-from .pipeline import MorphologyPipeline
+# from .pipeline import MorphologyPipeline
 
-__all__ = ["MorphologyPipeline"]
+# __all__ = ["MorphologyPipeline"]
