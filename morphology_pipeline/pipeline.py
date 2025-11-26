@@ -16,7 +16,6 @@ from morphology_pipeline.pseudotime import window_segments, descriptor_from_segm
 from morphology_pipeline.corridor_mask import deskew_with_hull, detect_corridors_via_hull
 
 
-
 def _contains_point_in_window(cx: float, cy: float, xs: np.ndarray, yt: np.ndarray, yb: np.ndarray, m_est: float) -> bool:
     """
     Test if (cx,cy) is inside the vertical envelope of the window, using
@@ -48,21 +47,21 @@ def _contains_point_in_window(cx: float, cy: float, xs: np.ndarray, yt: np.ndarr
     return (y_top <= cy <= y_bot)
 
 def _prep_window(win: dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
-        """
-        Prepare sorted arrays for a window's segments.
-        Expects segments as iterable of (x, y_top, y_bot).
-        """
-        segs = win.get('segments') or []
-        if len(segs) == 0:
-            return None
-        xs = np.asarray([s[0] for s in segs], dtype=float)
-        yt = np.asarray([s[1] for s in segs], dtype=float)
-        yb = np.asarray([s[2] for s in segs], dtype=float)
-        order = np.argsort(xs)
-        xs, yt, yb = xs[order], yt[order], yb[order]
-        # estimate step (m) from median dx if available
-        m_est = float(np.median(np.diff(xs))) if len(xs) > 1 else 1.0
-        return xs, yt, yb, m_est
+    """
+    Prepare sorted arrays for a window's segments.
+    Expects segments as iterable of (x, y_top, y_bot).
+    """
+    segs = win.get('segments') or []
+    if len(segs) == 0:
+        return None
+    xs = np.asarray([s[0] for s in segs], dtype=float)
+    yt = np.asarray([s[1] for s in segs], dtype=float)
+    yb = np.asarray([s[2] for s in segs], dtype=float)
+    order = np.argsort(xs)
+    xs, yt, yb = xs[order], yt[order], yb[order]
+    # estimate step (m) from median dx if available
+    m_est = float(np.median(np.diff(xs))) if len(xs) > 1 else 1.0
+    return xs, yt, yb, m_est
 
 
 def run_pipeline_and_save_csvs(background: np.ndarray,
@@ -74,7 +73,7 @@ def run_pipeline_and_save_csvs(background: np.ndarray,
     SD = StainDataset.from_folder(folder)
     SD.add_center_eccentricity()
     #TODO make them parameters
-    m, L, stride, L_min = 2, 10, 1, 8  # spacing, length, stride, min len
+    m, L, stride, L_min = 2, 30, 1, 8  # spacing, length, stride, min len
 
     rot_img, corr_mask, hull_mask, rot_deg = deskew_with_hull(background)
 
@@ -120,9 +119,47 @@ def run_pipeline_and_save_csvs(background: np.ndarray,
         cy = float(np.mean([0.5 * (s[1] + s[2]) for s in segs])) if segs else 0.0
         window_infos.append((win, prep, (cx, cy)))
 
+    # rotate centers once so they share the corridor frame
+    H0, W0 = background.shape[:2]
+    M = affine_like_skimage_no_resize(W0, H0, rot_deg)
+
+    if "center_rot" not in SD.dataframe.columns:
+        SD.dataframe["center_rot"] = None
+
+    # scale centers if dataset image size differs from the provided background
+    h_ref = float(SD.dataframe["height"].iloc[0]) if "height" in SD.dataframe.columns else H0
+    w_ref = float(SD.dataframe["width"].iloc[0]) if "width" in SD.dataframe.columns else W0
+    sx = W0 / w_ref if w_ref else 1.0
+    sy = H0 / h_ref if h_ref else 1.0
+
+    centers_rot_map: Dict[int, Tuple[float, float]] = {}
+    for obj_id, val in SD.dataframe["center"].items():
+        if val is None:
+            continue
+        cx_raw, cy_raw = val
+        cx_arr = np.asarray(cx_raw)
+        cy_arr = np.asarray(cy_raw)
+        if cx_arr.size == 0 or cy_arr.size == 0:
+            continue
+        cx, cy = float(cx_arr.reshape(-1)[0]) * sx, float(cy_arr.reshape(-1)[0]) * sy
+        if not (np.isfinite(cx) and np.isfinite(cy)):
+            continue
+        pt_rot = apply_affine_points(M, np.asarray([[float(cx), float(cy)]], dtype=float))[0]
+        centers_rot_map[obj_id] = (float(pt_rot[0]), float(pt_rot[1]))
+        SD.dataframe.at[obj_id, "center_rot"] = centers_rot_map[obj_id]
+
+    # print("len(corridors)       =", len(corridors))
+    # print("len(all_windows)     =", len(all_windows))
+    # print("len(matched_windows) =", len(matched_windows))
+    # print("len(window_infos)    =", len(window_infos))
+
+    # print("len(SD.dataframe)    =", len(SD.dataframe))
+    # print("len(centers_rot_map) =", len(centers_rot_map))
+
+
+    mask = np.zeros(len(SD.dataframe), dtype=bool)
     selected_objs = []
-    print(window_infos)
-    if window_infos:
+    if window_infos and centers_rot_map:
         wc = np.asarray([w[2] for w in window_infos], dtype=float)
         x_low, x_high = np.percentile(wc[:, 0], [15, 85])
         y_low, y_high = np.percentile(wc[:, 1], [15, 85])
@@ -130,31 +167,16 @@ def run_pipeline_and_save_csvs(background: np.ndarray,
             w for w in window_infos
             if x_low <= w[2][0] <= x_high and y_low <= w[2][1] <= y_high
         ]
-
-        H, W = background.shape[:2]
-        M = affine_like_skimage_no_resize(W, H, rot_deg)
-
-        valid_idxs, centers_raw = [], []
-        for obj_id, val in SD.dataframe["center"].items():
-            if val is None:
-                continue
-            cx, cy = val
-            if cx.size < 1 or cy.size < 1:
-                print(f"No centre for obj_id {obj_id}")
-                continue
-            valid_idxs.append(obj_id)
-            centers_raw.append((float(cx), float(cy)))
-
-        mask = np.zeros(len(SD.dataframe), dtype=bool)
-        if centers_raw and central_windows:
-            centers_rot = apply_affine_points(M, np.asarray(centers_raw, dtype=float))
-            for obj_id, (cxr, cyr) in zip(valid_idxs, centers_rot):
+        if central_windows:
+            for obj_id, (cxr, cyr) in centers_rot_map.items():
+                if len(selected_objs) >= 12:
+                    break
                 if not (x_low <= cxr <= x_high and y_low <= cyr <= y_high):
                     continue
                 for win, prep, _ in central_windows:
                     xs, yt, yb, m_est = prep
                     if _contains_point_in_window(cxr, cyr, xs, yt, yb, m_est):
-                        print(f"Selected obj_id {obj_id} in corridor {win.get('corridor_id')} region {win.get('region_id')}")
+                        print("FOUND ONE")
                         selected_objs.append({
                             "obj_id": obj_id,
                             "center_rot": (float(cxr), float(cyr)),
@@ -164,5 +186,4 @@ def run_pipeline_and_save_csvs(background: np.ndarray,
                         mask[SD.dataframe.index.get_loc(obj_id)] = True
                         break
 
-        return SD, mask, selected_objs # selected_objs
-    
+    return SD, mask, selected_objs
