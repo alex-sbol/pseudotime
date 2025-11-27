@@ -11,7 +11,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from skimage import io, color, filters, morphology, transform, feature
-from skimage.transform import hough_line, hough_line_peaks
+from morphology_pipeline.align_corridors import estimate_corridor_angle
 
 # ---------------- helpers ----------------
 def black_mask(img: np.ndarray):
@@ -34,21 +34,10 @@ def corridors_from_black_hull(img: np.ndarray, tiny_white_px: int = 16):
     corridors = morphology.remove_small_holes(corridors, area_threshold=64)
     return corridors.astype(np.uint8), hull.astype(np.uint8)
 
-def estimate_rot_from_corridors(mask_white: np.ndarray) -> float:
-    edges = feature.canny(mask_white.astype(bool), sigma=2.0)
-    h, theta, dist = hough_line(edges)
-    _, angles, _ = hough_line_peaks(h, theta, dist, num_peaks=12)
-    if len(angles) == 0:
-        return 0.0
-    # Convert to line orientation; rotate to make horizontal
-    phi = angles - np.pi/2.0
-    deg = float(np.rad2deg(np.median(phi)))
-    return -deg
 
 def deskew_with_hull(img: np.ndarray):
     corr0, hull0 = corridors_from_black_hull(img)
-    #TODO evaluate the best angle estimator
-    rot_deg = estimate_rot_from_corridors(corr0)
+    rot_deg, _ = estimate_corridor_angle(corr0)
     img_rot  = transform.rotate(img,  rot_deg, order=1, preserve_range=True).astype(img.dtype)
     corr_rot = transform.rotate(corr0, rot_deg, order=0, preserve_range=True).astype(np.uint8)
     hull_rot = transform.rotate(hull0, rot_deg, order=0, preserve_range=True).astype(np.uint8)
