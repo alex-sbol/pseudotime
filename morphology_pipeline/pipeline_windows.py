@@ -635,6 +635,280 @@ def corridor_feature_profile_sliding(
     return pd.DataFrame(rows)
 
 
+# =====================================================================
+# HELPER: collect cells + local s for a single window
+# =====================================================================
+
+def _cells_for_window(
+    window_idx: int,
+    SD,
+    mask: np.ndarray,
+    centers_rot_map: Dict[int, Tuple[float, float]],
+    window_infos,
+    ecc_col: str = "eccentricity",
+) -> pd.DataFrame:
+    """
+    For a given window index, return a DataFrame with:
+    - obj_id
+    - s_local  : arc-length position along this window (px)
+    - ecc      : scalar eccentricity
+    Only cells with mask == True and lying inside this window are used.
+    """
+
+    win, xs, yt, yb = window_infos[window_idx]
+
+    xs = np.asarray(xs, dtype=float)
+    yt = np.asarray(yt, dtype=float)
+    yb = np.asarray(yb, dtype=float)
+
+    # geometry: arc-length coordinate s along the midline
+    y_mid = 0.5 * (yt + yb)
+    dx = np.diff(xs)
+    dy = np.diff(y_mid)
+    seg_lengths = np.sqrt(dx**2 + dy**2)
+    s = np.concatenate(([0.0], np.cumsum(seg_lengths)))  # s[i] at xs[i]
+
+    # precompute scalar eccentricity
+    if ecc_col not in SD.dataframe.columns:
+        raise KeyError(f"Column '{ecc_col}' not found in SD.dataframe")
+    ecc_series = SD.dataframe[ecc_col].apply(_as_scalar)
+
+    rows = []
+    corridor_idx = np.where(mask)[0]
+
+    for idx in corridor_idx:
+        obj_id = SD.dataframe.index[idx]
+        if obj_id not in centers_rot_map:
+            continue
+
+        cxr, cyr = centers_rot_map[obj_id]
+
+        # keep only if the center is inside this window
+        if not contains_point(cxr, cyr, xs, yt, yb):
+            continue
+
+        # local arc-length s for this cell
+        i = np.searchsorted(xs, cxr)
+        i = int(np.clip(i, 1, len(xs) - 1))
+        x0, x1 = xs[i - 1], xs[i]
+        if x1 == x0:
+            t = 0.0
+        else:
+            t = (cxr - x0) / (x1 - x0)
+        s_cell = s[i - 1] + t * (s[i] - s[i - 1])
+
+        ecc_val = ecc_series.iloc[idx]
+        if np.isnan(ecc_val):
+            continue
+
+        rows.append(
+            {
+                "obj_id": obj_id,
+                "s_local": float(s_cell),
+                "ecc": float(ecc_val),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+# =====================================================================
+# HELPER: per-window profile ecc vs position (like your slide plots)
+# =====================================================================
+
+def ecc_profile_for_single_window(
+    window_idx: int,
+    SD,
+    mask: np.ndarray,
+    centers_rot_map: Dict[int, Tuple[float, float]],
+    window_infos,
+    bin_size_px: float = 1.0,
+) -> pd.DataFrame:
+    """
+    Build 'eccentricity vs position along window' profile
+    for one window, by binning local s positions.
+
+    Returns DataFrame with columns:
+    - pos_px     : mean position in this bin (px)
+    - median_ecc : median eccentricity in the bin
+    - std_ecc    : std of eccentricity in the bin
+    - n_cells    : number of cells in the bin
+    """
+
+    df_cells = _cells_for_window(window_idx, SD, mask, centers_rot_map, window_infos)
+    if df_cells.empty:
+        return pd.DataFrame(columns=["pos_px", "median_ecc", "std_ecc", "n_cells"])
+
+    s_vals = df_cells["s_local"].values
+    ecc_vals = df_cells["ecc"].values
+
+    length_px = s_vals.max()  # window length approx.
+    bins = np.arange(0.0, length_px + bin_size_px, bin_size_px)
+
+    df = pd.DataFrame({"s": s_vals, "ecc": ecc_vals})
+    df["bin"] = np.digitize(df["s"], bins) - 1   # 0-based
+
+    grouped = (
+        df.groupby("bin")
+        .agg(
+            pos_px=("s", "mean"),
+            median_ecc=("ecc", "median"),
+            std_ecc=("ecc", "std"),
+            n_cells=("ecc", "size"),
+        )
+        .dropna(subset=["pos_px"])
+    )
+
+    # replace NaN std (only 1 cell) by 0 for plotting
+    grouped["std_ecc"] = grouped["std_ecc"].fillna(0.0)
+    return grouped
+
+
+# =====================================================================
+# HELPER: scan all windows and find extremes in median ecc
+# =====================================================================
+
+def find_extreme_windows_by_median(
+    SD,
+    mask: np.ndarray,
+    centers_rot_map: Dict[int, Tuple[float, float]],
+    window_infos,
+    min_cells: int = 5,
+) -> pd.DataFrame:
+    """
+    For each window, compute median eccentricity of its cells.
+    Returns a DataFrame with one row per window:
+      - win_idx
+      - n_cells
+      - median_ecc
+    You can then choose the highest/lowest median windows as A/B.
+    """
+
+    records = []
+    for k in range(len(window_infos)):
+        df_cells = _cells_for_window(k, SD, mask, centers_rot_map, window_infos)
+        n = len(df_cells)
+        if n < min_cells:
+            continue
+        med = float(df_cells["ecc"].median())
+        records.append({"win_idx": k, "n_cells": n, "median_ecc": med})
+
+    if not records:
+        return pd.DataFrame(columns=["win_idx", "n_cells", "median_ecc"])
+
+    df_wins = pd.DataFrame(records).sort_values("median_ecc")
+    return df_wins
+
+def find_representative_window(
+    window_infos,
+    centers_rot_map,
+    SD,
+    mask,
+    mode: str = "max_cells",
+):
+    """
+    Pick ONE window that acts as the 'smallest repeating unit' of the corridor.
+
+    The corridor is constructed by repeating these matched windows along x,
+    so each (win, xs, yt, yb) in window_infos is one candidate unit.
+    We choose a representative window according to the chosen scoring mode.
+
+    Parameters
+    ----------
+    window_infos : list
+        Output of run_pipeline_and_save_csvs; list of
+        (win_dict, xs, yt, yb) for each matched window.
+
+    centers_rot_map : dict
+        obj_id -> (x_rot, y_rot) in the rotated image coordinates.
+
+    SD : StainDataset
+        Dataset; SD.dataframe used to map row index ↔ obj_id.
+
+    mask : np.ndarray[bool]
+        Boolean mask over SD.dataframe: True for cells inside SOME corridor
+        window (global corridor mask, like we already computed).
+
+    mode : {"max_cells", "median_x", "longest"}
+        Strategy for picking the representative window:
+        - "max_cells": choose the window that contains the largest number of
+          *corridor* cells (recommended).
+        - "median_x":  choose the window whose center in x is closest to the
+          median of all window centers (geometric middle).
+        - "longest":   choose the window with the largest length along the
+          midline (should all be similar if created with fixed L).
+
+    Returns
+    -------
+    rep_idx : int
+        Index into window_infos of the chosen window.
+
+    rep_win : dict
+        The win_dict of that window.
+
+    xs0, yt0, yb0 : np.ndarray
+        The boundary arrays describing that window.
+
+    length_px : float
+        Length of the window along its midline in pixels.
+    """
+
+    if not window_infos:
+        raise ValueError("window_infos is empty – no windows to choose from.")
+
+    # --- precompute geometry and basic stats for each window ------------
+    lengths = []
+    x_centers = []
+    cell_counts = []
+
+    for w_idx, (win, xs, yt, yb) in enumerate(window_infos):
+        xs = np.asarray(xs, dtype=float)
+        yt = np.asarray(yt, dtype=float)
+        yb = np.asarray(yb, dtype=float)
+
+        # geometry
+        y_mid = 0.5 * (yt + yb)
+        dx = np.diff(xs)
+        dy = np.diff(y_mid)
+        seg_lengths = np.sqrt(dx**2 + dy**2)
+        length_px = float(seg_lengths.sum())
+        x_center = float(xs.mean()) if xs.size > 0 else np.nan
+
+        lengths.append(length_px)
+        x_centers.append(x_center)
+
+        # how many *corridor* cells fall in this window?
+        count = 0
+        for obj_id, (cxr, cyr) in centers_rot_map.items():
+            idx = SD.dataframe.index.get_loc(obj_id)
+            if not mask[idx]:
+                continue  # ignore cells outside global corridor mask
+            if contains_point(cxr, cyr, xs, yt, yb):
+                count += 1
+        cell_counts.append(count)
+
+    lengths   = np.asarray(lengths, dtype=float)
+    x_centers = np.asarray(x_centers, dtype=float)
+    cell_counts = np.asarray(cell_counts, dtype=int)
+
+    # --- choose representative window according to mode -----------------
+    if mode == "max_cells":
+        rep_idx = int(np.argmax(cell_counts))
+    elif mode == "median_x":
+        # center-of-corridor window (in x)
+        median_x = np.nanmedian(x_centers)
+        rep_idx = int(np.nanargmin(np.abs(x_centers - median_x)))
+    elif mode == "longest":
+        rep_idx = int(np.nanargmax(lengths))
+    else:
+        raise ValueError(f"Unknown mode '{mode}'. Use 'max_cells', 'median_x', or 'longest'.")
+
+    rep_win, xs0, yt0, yb0 = window_infos[rep_idx]
+    length_px = float(lengths[rep_idx])
+
+    return rep_idx, rep_win, np.asarray(xs0, float), np.asarray(yt0, float), np.asarray(yb0, float), length_px
+
+
 # ---------------------------------------------------------------------
 # Generic binned-median + IQR plot for any feature
 # ---------------------------------------------------------------------
