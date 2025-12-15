@@ -199,4 +199,4 @@ def run_pipeline_and_save_csvs(background: np.ndarray,
                 mask[SD.dataframe.index.get_loc(obj_id)] = True
                 break
 
-    return SD, mask, selected_objs
+    return SD, mask, selected_objs, ref_desc
