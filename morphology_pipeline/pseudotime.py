@@ -1,4 +1,202 @@
 import numpy as np
+from numpy.fft import fft, ifft
+from scipy.signal import find_peaks
+from typing import Dict, List, Tuple
+
+def process_corridors(
+    mask_white,
+    corridor_bbox,
+    m,
+    min_period,
+    max_period,
+):
+    """
+    Docstring for process_corridors
+    
+    :param mask_white: Rotated binary mask of the corridors
+    :param corridor_bbox: list of dict with keys 'x0', 'x1', 'y0', 'y1' defining the corridor bounding box
+
+    :param min_period: minimum possible period
+    :param max_period: maximum possible period
+    """
+    signals = collect_corridors(mask_white, corridor_bbox, m)
+
+    T0 = estimate_period(signals, min_period, max_period)
+
+    candidates = range(
+        max(min_period, T0 - 2),
+        min(max_period, T0 + 3),
+    )
+    best_T = T0
+    best_score = -np.inf
+
+    for Tc in candidates:
+        score = alignment_score(signals, Tc)
+        if score > best_score:
+            best_score = score
+            best_T = Tc
+
+    T = best_T
+
+
+    signal = max(signals, key=len)  # pick longest signal
+    initial_template = fold_signal(signal, T)
+
+    
+    offsets = []
+    for s in signals:
+        p = fold_signal(s, T)
+        o = estimate_offset(p, initial_template)
+        offsets.append(o)
+
+    template = refined_template(signals, offsets, T)
+
+    results = []
+    for i, s in enumerate(signals):
+        line_id = assign_line_ids(len(s), T, offsets[i])
+        confidence = compute_confidence(s, template, line_id)
+        line_id = apply_missing_policy(line_id, confidence, conf_threshold=0.4)
+        
+        results.append({
+            "signal": s,
+            "line_id": line_id,
+            "confidence": confidence,
+            "offset": offsets[i],
+        })
+
+    return {
+        "period": T,
+        "template": template,
+        "corridors": results,
+    }
+
+def collect_corridors(mask_white, corridor_bbox, m) -> List[np.ndarray]:
+    signals = []
+    for bbox in corridor_bbox:
+        x0, x1 = bbox['x0'], bbox['x1']
+        y0, y1 = bbox['y0'], bbox['y1']
+        signal = []
+        for x in range(x0, x1 + 1, m):
+            col = mask_white[y0:y1 + 1, x]
+            ys = np.flatnonzero(col)
+            if ys.size == 0:
+                signal.append(0)
+            else:
+                w = ys[-1] - ys[0] + 1
+                signal.append(w)
+        signal = (signal - np.mean(signal)) / (np.std(signal) + 1e-8)
+        signals.append(np.array(signal, dtype=float))
+        signal = (signal - np.mean(signal)) / (np.std(signal) + 1e-8) # normalize
+    return signals
+
+
+def estimate_period(signals: List[np.ndarray],
+                    min_period: int,
+                    max_period: int) -> int:
+    """
+    Robust period estimate using mean autocorrelation.
+    """
+    min_len = min(len(s) for s in signals)
+    X = np.stack([s[:min_len] for s in signals])
+    mean_signal = X.mean(axis=0)
+
+    acf = np.correlate(mean_signal, mean_signal, mode="full")
+    acf = acf[len(acf)//2:]
+
+    peaks, _ = find_peaks(acf[min_period:max_period])
+    if len(peaks) == 0:
+        raise RuntimeError("No period peak found")
+
+    T = peaks[0] + min_period
+    return T
+
+def fold_signal(signal: np.ndarray, T: int) -> np.ndarray:
+    acc = np.zeros(T)
+    cnt = np.zeros(T)
+
+    for t, v in enumerate(signal):
+        k = t % T
+        acc[k] += v
+        cnt[k] += 1
+
+    return acc / np.maximum(cnt, 1)
+
+def estimate_offset(signal: np.ndarray, template: np.ndarray) -> int:
+    """
+    Returns offset o such that (t + o) % T aligns signal to template.
+    """
+    f_sig = fft(signal)
+    f_tmp = fft(template)
+    corr = np.real(ifft(f_sig * np.conj(f_tmp)))
+    return int(np.argmax(corr))
+
+
+def refined_template(signals, offsets, T):
+    acc = np.zeros(T)
+    cnt = np.zeros(T)
+
+    for s, o in zip(signals, offsets):
+        for t, v in enumerate(s):
+            k = (t + o) % T
+            acc[k] += v
+            cnt[k] += 1
+
+    return acc / np.maximum(cnt, 1)
+
+def assign_line_ids(length: int, T: int, offset: int) -> np.ndarray:
+    return (np.arange(length) + offset) % T
+
+def compute_confidence(signal, template, line_id, window=2):
+    conf = np.zeros(len(signal))
+
+    for t in range(len(signal)):
+        errs = []
+        for k in range(-window, window + 1):
+            tt = t + k
+            if 0 <= tt < len(signal):
+                ref = template[line_id[tt]]
+                errs.append((signal[tt] - ref) ** 2)
+
+        mse = np.mean(errs) if errs else np.inf
+        conf[t] = np.exp(-mse)
+
+    return conf
+
+
+def apply_missing_policy(
+    line_id: np.ndarray,
+    conf: np.ndarray,
+    conf_threshold: float = 0.4
+) -> np.ndarray:
+    lid = line_id.copy()
+    #lid[conf < conf_threshold] = -1
+    return lid
+
+def alignment_score(signals, T):
+    # use longest signal as reference
+    ref = max(signals, key=len)
+    tmpl0 = fold_signal(ref, T)
+
+    offsets = []
+    for s in signals:
+        p = fold_signal(s, T)
+        o = estimate_offset(p, tmpl0)
+        offsets.append(o)
+
+    tmpl = refined_template(signals, offsets, T)
+
+    # score = mean correlation between aligned folds and template
+    scores = []
+    for s, o in zip(signals, offsets):
+        p = fold_signal(s, T)
+        p_aligned = np.roll(p, -o)
+
+        a = p_aligned - p_aligned.mean()
+        b = tmpl - tmpl.mean()
+        denom = np.linalg.norm(a) * np.linalg.norm(b) + 1e-8
+        scores.append(np.dot(a, b) / denom)
+
+    return float(np.mean(scores))
 
 
 def gen_lines(x0: int, m: int, L: int) -> np.ndarray:

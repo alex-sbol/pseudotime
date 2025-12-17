@@ -7,6 +7,7 @@ from morphology_pipeline.pseudotime import window_segments, descriptor_from_segm
 from morphology_pipeline.corridor_mask import deskew_with_hull, detect_corridors_via_hull
 from typing import List, Dict, Tuple
 import numpy as np
+from morphology_pipeline.pseudotime import process_corridors
 
 
 
@@ -21,6 +22,7 @@ def create_dataset(background, folder):
 
     rot_img, corr_mask, hull_mask, rot_deg = deskew_with_hull(background)
 
+    #list of bbox dicts {id, y0, y1, x0, x1}
     corridors = detect_corridors_via_hull(
         corr_mask, hull_mask,
         row_cov_thresh_rel_hull=0.07,
@@ -28,6 +30,10 @@ def create_dataset(background, folder):
         merge_gap_px=3
     )
     print(f"Detected {len(corridors)} corridors.")
+
+    pseudotime = process_corridors(corr_mask, corridors, m, min_period=5, max_period=20)
+
+    return pseudotime, corridors, corr_mask
 
     
     H0, W0 = background.shape[:2]
@@ -37,7 +43,6 @@ def create_dataset(background, folder):
     if "center_rot" not in SD.dataframe.columns:
         SD.dataframe["center_rot"] = None
 
-    
     #RECLAIM this code from AI
     # scaling to match background if dataset used different dimensions
     h_ref = float(SD.dataframe["height"].iloc[0]) if "height" in SD.dataframe.columns else H0
@@ -65,7 +70,7 @@ def create_dataset(background, folder):
         y = float(y_arr.reshape(-1)[0]) * sy
         x = float(x_arr.reshape(-1)[0]) * sx
 
-        pt_rot = apply_affine_points(
+        pt_rot = apply_affine_points( 
             M, np.asarray([[x, y]], dtype=float)
         )[0]
 
