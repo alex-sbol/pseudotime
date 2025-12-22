@@ -104,6 +104,18 @@ def apply_affine_points(M: np.ndarray, pts_xy: np.ndarray) -> np.ndarray:
     hom = np.c_[pts_xy, np.ones((pts_xy.shape[0], 1), dtype=pts_xy.dtype)]
     return hom @ M.T
 
+def flatten_dict(d: Dict) -> List:
+    """turns a nested dict into a 1D dict by concatenating keys with '.'"""
+    out = []
+    for k, v in d.items():
+            if isinstance(v, dict):
+                sub = flatten_dict(v)
+                for sk, sv in sub.items():
+                    out.append((f"{k}.{sk}", sv))
+            else:
+                out.append((k, v))
+    return dict(out)
+
 
 
 
@@ -223,25 +235,30 @@ class StainDataset:
     
     def add_center_eccentricity(self) -> None:
         """Add 'center' and 'eccentricity' columns to the dataframe."""
-        centers = []
-        eccentricities = []
+        # centers = []
+        # eccentricities = []
+        properties_rows = []
         for obj_id in self.dataframe.index:
             try:
                 dapi_img = self.get_channel(obj_id, "dapi", as_uint8=False)
                 labels = (dapi_img > 0).astype(np.uint8)
                 props = sizeshape_fn(labels, None)
-                center_x = props['Center_X']
-                center_y = props['Center_Y']
-                eccentricity = props['Eccentricity']
-                centers.append((center_x, center_y))
-                eccentricities.append(eccentricity)
+                # center_x = props['Center_X']
+                # center_y = props['Center_Y']
+                # eccentricity = props['Eccentricity']
+                # centers.append((center_x, center_y))
+                # eccentricities.append(eccentricity)
+                properties_rows.append(props)
             except Exception as e:
                 print(f"[WARN] Could not compute size/shape for obj {obj_id}: {e}")
-                centers.append((np.nan, np.nan))
-                eccentricities.append(np.nan)
-
-        self.dataframe['center'] = centers
-        self.dataframe['eccentricity'] = eccentricities
+                # centers.append((np.nan, np.nan))
+                # eccentricities.append(np.nan)
+                properties_rows.append({})
+        
+        properties_df = pd.DataFrame(properties_rows)
+        self.dataframe = pd.concat([self.dataframe, properties_df], axis=1)
+        # self.dataframe['center'] = centers
+        # self.dataframe['eccentricity'] = eccentricities
 
     def add_corridor_ids(self, corridor_bboxes: List[Dict[str, int]]) -> None:
         """Add 'corridor_ids' column to the dataframe based on provided corridor bounding boxes.

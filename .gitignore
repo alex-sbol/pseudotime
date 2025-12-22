@@ -32,3 +32,4 @@ coverage.xml
 .DS_Store
 Thumbs.db
 dump.json
+res/

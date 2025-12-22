@@ -33,7 +33,7 @@ def create_dataset(background, folder):
 
     pseudotime = process_corridors(corr_mask, corridors, m, min_period=5, max_period=20)
 
-    return pseudotime, corridors, corr_mask
+    #return pseudotime, corridors, corr_mask
 
     
     H0, W0 = background.shape[:2]
@@ -43,7 +43,6 @@ def create_dataset(background, folder):
     if "center_rot" not in SD.dataframe.columns:
         SD.dataframe["center_rot"] = None
 
-    #RECLAIM this code from AI
     # scaling to match background if dataset used different dimensions
     h_ref = float(SD.dataframe["height"].iloc[0]) if "height" in SD.dataframe.columns else H0
     w_ref = float(SD.dataframe["width"].iloc[0]) if "width" in SD.dataframe.columns else W0
@@ -77,6 +76,10 @@ def create_dataset(background, folder):
         x_rot, y_rot = float(pt_rot[0]), float(pt_rot[1])
         centers_rot_map[obj_id] = (x_rot, y_rot)
         SD.dataframe.at[obj_id, "center_rot"] = (x_rot, y_rot)
+
+        #Now we need to assign pseudotime to each cell based on its rotated center location
+        
+
 
 
     

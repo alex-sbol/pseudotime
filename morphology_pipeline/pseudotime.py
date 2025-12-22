@@ -38,18 +38,19 @@ def process_corridors(
 
     T = best_T
 
-
+    peak_list = [detect_cycles(s, min_dist=T//2) for s in signals]
     signal = max(signals, key=len)  # pick longest signal
-    initial_template = fold_signal(signal, T)
+    #initial_template = fold_signal(signal, T)
+    initial_template = fold_cycles(signal, peak_list[signals.index(signal)], L=T)
 
     
-    offsets = []
-    for s in signals:
-        p = fold_signal(s, T)
-        o = estimate_offset(p, initial_template)
-        offsets.append(o)
+    # offsets = []
+    # for s in signals:
+    #     p = fold_signal(s, T)
+    #     o = estimate_offset(p, initial_template)
+    #     offsets.append(o)
 
-    template = refined_template(signals, offsets, T)
+    # template = refined_template(signals, offsets, T)
 
     results = []
     for i, s in enumerate(signals):
@@ -118,6 +119,26 @@ def fold_signal(signal: np.ndarray, T: int) -> np.ndarray:
         k = t % T
         acc[k] += v
         cnt[k] += 1
+
+    return acc / np.maximum(cnt, 1)
+ 
+def detect_cycles(signal, min_dist):
+    peaks, _ = find_peaks(signal, distance=min_dist)
+    return peaks
+
+def fold_cycles(signal, peaks, L):
+    # L is median cycle length
+    acc = np.zeros(L)
+    cnt = np.zeros(L)
+
+    for a, b in zip(peaks[:-1], peaks[1:]):
+        seg = signal[a:b]
+        xs = np.linspace(0, 1, len(seg))
+        xq = np.linspace(0, 1, L)
+        seg_rs = np.interp(xq, xs, seg)
+
+        acc += seg_rs
+        cnt += 1
 
     return acc / np.maximum(cnt, 1)
 
