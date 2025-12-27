@@ -21,8 +21,7 @@ def process_corridors(
     """
 
 
-
-    signals = collect_corridors(mask_white, corridor_bbox, m)
+    signals, selected_bboxes = collect_corridors(mask_white, corridor_bbox, m)
 
     T = estimate_period(signals, min_period, max_period)
 
@@ -38,7 +37,7 @@ def process_corridors(
     template = refined_template_cycles(signals, peaks_list, T)
 
     results = []
-    for s, peaks in zip(signals, peaks_list):
+    for s, peaks, bbox in zip(signals, peaks_list, selected_bboxes):
 
         line_id = assign_line_ids_cycles(len(s), peaks, T)
         confidence = compute_confidence(s, template, line_id)
@@ -49,6 +48,7 @@ def process_corridors(
             "line_id": line_id,
             "confidence": confidence,
             "peaks": peaks,
+            "bbox": bbox,
         })
 
     return {
@@ -59,7 +59,11 @@ def process_corridors(
 
 def collect_corridors(mask_white, corridor_bbox, m) -> List[np.ndarray]:
     signals = []
+    selected_bboxes = []
     for bbox in corridor_bbox:
+        if bbox['y1'] < mask_white.shape[0] * 0.10 or bbox['y0'] > mask_white.shape[0] * 0.90:
+            continue
+        selected_bboxes.append(bbox)
         x0, x1 = bbox['x0'], bbox['x1']
         y0, y1 = bbox['y0'], bbox['y1']
         signal = []
@@ -74,7 +78,7 @@ def collect_corridors(mask_white, corridor_bbox, m) -> List[np.ndarray]:
         signal = (signal - np.mean(signal)) / (np.std(signal) + 1e-8)
         signals.append(np.array(signal, dtype=float))
         signal = (signal - np.mean(signal)) / (np.std(signal) + 1e-8) # normalize
-    return signals
+    return signals, selected_bboxes
 
 
 def estimate_period(signals: List[np.ndarray],
