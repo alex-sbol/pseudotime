@@ -44,6 +44,9 @@ def create_dataset(background, folder, SD):
     
     
     H0, W0 = background.shape[:2]
+    W1, H1 = rot_img.shape[:2] 
+    CRX = (W1 -1) / 2
+    CRY = (H1 -1) / 2
     R = rotation_matrix( rot_deg)
 
 
@@ -51,8 +54,6 @@ def create_dataset(background, folder, SD):
     # scaling to match background if dataset used different dimensions
     h_ref = float(SD.dataframe["height"].iloc[0]) if "height" in SD.dataframe.columns else H0
     w_ref = float(SD.dataframe["width"].iloc[0]) if "width" in SD.dataframe.columns else W0
-    sx = W0 / w_ref if w_ref else 1.0
-    sy = H0 / h_ref if h_ref else 1.0
 
     cols = [
     "sizeshape.Center_X",
@@ -99,6 +100,11 @@ def create_dataset(background, folder, SD):
         x_max_rot = rot_corners[:, 0].max()
         y_max_rot = rot_corners[:, 1].max()
 
+        # if x_min_rot > x_max_rot:
+        #     x_min_rot, x_max_rot = x_max_rot, x_min_rot
+        # if y_min_rot > y_max_rot:
+        #     y_min_rot, y_max_rot = y_max_rot, y_min_rot
+
         SD.dataframe.at[obj_id, "centered_center_x"] = x
         SD.dataframe.at[obj_id, "centered_center_y"] = y
 
@@ -115,11 +121,31 @@ def create_dataset(background, folder, SD):
         SD.dataframe.at[obj_id, "bbox_rot_max_x"] = x_max_rot
         SD.dataframe.at[obj_id, "bbox_rot_max_y"] = y_max_rot
 
+        SD.dataframe.at[obj_id, "pseudotime"] = None
+        SD.dataframe.at[obj_id, "pseudotime_widths"] = None
 
+        for corridor_info in pseudotime["corridors"]:
+            bbox = corridor_info["bbox"]
 
+            if (bbox["x0"] <= x_rot_c + CRX <= bbox["x1"]) and (bbox["y0"] <= y_rot_c + CRY <= bbox["y1"]):
+
+                lh = int((x_min_rot + CRX - bbox["x0"]) // m)
+                rh = int(( x_max_rot + CRX - bbox["x1"]) // m) + 1
+
+                # if lh < 0 or rh < 0:
+                #     continue
+
+                line_ids = bbox["line_id"][lh:rh]
+                widthss = bbox["width"][lh:rh]
+                if True:
+                    SD.dataframe.at[obj_id, "pseudotime"] = line_ids
+                    SD.dataframe.at[obj_id, "pseudotime_widths"] = widthss
+                else:
+                    SD.dataframe.at[obj_id, "pseudotime"] = None
+                break
 
         #Now we need to assign pseudotime to each cell based on its rotated center location
-        
+
         
 
     return pseudotime, corridors, corr_mask

@@ -21,7 +21,7 @@ def process_corridors(
     """
 
 
-    signals, selected_bboxes = collect_corridors(mask_white, corridor_bbox, m)
+    signals, selected_bboxes, lengths = collect_corridors(mask_white, corridor_bbox, m)
 
     T = estimate_period(signals, min_period, max_period)
 
@@ -42,10 +42,10 @@ def process_corridors(
         line_id = assign_line_ids_cycles(len(s), peaks, T)
         confidence = compute_confidence(s, template, line_id)
         line_id = apply_missing_policy(line_id, confidence)
-
+        bbox["width"] = lengths
+        bbox["line_id"] = line_id
         results.append({
             "signal": s,
-            "line_id": line_id,
             "confidence": confidence,
             "peaks": peaks,
             "bbox": bbox,
@@ -59,6 +59,7 @@ def process_corridors(
 
 def collect_corridors(mask_white, corridor_bbox, m) -> List[np.ndarray]:
     signals = []
+    lengths = []
     selected_bboxes = []
     for bbox in corridor_bbox:
         if bbox['y1'] < mask_white.shape[0] * 0.10 or bbox['y0'] > mask_white.shape[0] * 0.90:
@@ -72,13 +73,15 @@ def collect_corridors(mask_white, corridor_bbox, m) -> List[np.ndarray]:
             ys = np.flatnonzero(col)
             if ys.size == 0:
                 signal.append(0)
+                lengths.append(0)
             else:
                 w = ys[-1] - ys[0] + 1
                 signal.append(w)
+                lengths.append(w)
         signal = (signal - np.mean(signal)) / (np.std(signal) + 1e-8)
         signals.append(np.array(signal, dtype=float))
         signal = (signal - np.mean(signal)) / (np.std(signal) + 1e-8) # normalize
-    return signals, selected_bboxes
+    return signals, selected_bboxes, lengths
 
 
 def estimate_period(signals: List[np.ndarray],
