@@ -8,8 +8,8 @@ import pandas as pd
 
 from morphology_pipeline.segmentation.stain_dataset import (
     StainDataset,
-    affine_like_skimage_no_resize,
-    apply_affine_points,
+    rotation_matrix,
+    apply_rotation,
 )
 from morphology_pipeline.pseudotime import window_segments, descriptor_from_segments, slide_windows_with_matching
 from morphology_pipeline.corridor_mask import deskew_with_hull, detect_corridors_via_hull
@@ -54,7 +54,7 @@ def run_pipeline_and_save_csvs(background: np.ndarray,
                                folder: str = None):
 
     SD = StainDataset.from_folder(folder)
-    SD.add_center_eccentricity()
+    SD.add_all_data()
 
     # TODO make them parameters
     m, L, stride, L_min = 2, 30, 1, 8
@@ -137,7 +137,7 @@ def run_pipeline_and_save_csvs(background: np.ndarray,
 
     # rotate all centers (IMPORTANT: converting (row,col)→(y,x)→(x,y))
     H0, W0 = background.shape[:2]
-    M = affine_like_skimage_no_resize(W0, H0, rot_deg)
+    M = rotation_matrix(W0, H0, rot_deg)
 
     if "center_rot" not in SD.dataframe.columns:
         SD.dataframe["center_rot"] = None
@@ -165,7 +165,7 @@ def run_pipeline_and_save_csvs(background: np.ndarray,
         y = float(row_arr.reshape(-1)[0]) * sy
         x = float(col_arr.reshape(-1)[0]) * sx
 
-        pt_rot = apply_affine_points(
+        pt_rot = apply_rotation(
             M, np.asarray([[x, y]], dtype=float)
         )[0]
 

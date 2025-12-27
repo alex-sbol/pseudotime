@@ -60,7 +60,7 @@ print(ds.dataframe.head())
 # print("Center_X:", res['Center_X'])      # Center X
 # print("Center_Y:", res['Center_Y'])      # Center Y
 
-ds.add_center_eccentricity()
+ds.add_all_data()
 
 c = ds.dataframe.loc[2]['center']
 

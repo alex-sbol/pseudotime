@@ -81,7 +81,7 @@ def _compose_topo_cells(arr01: np.ndarray, bg_norm: float = 0.4) -> np.ndarray:
 # ----------------------------
 # Helpers
 # ----------------------------
-def affine_like_skimage_no_resize(W: int, H: int, angle_deg: float) -> np.ndarray:
+def rotation_matrix(angle_deg: float) -> np.ndarray:
     """
     Build the 2x3 affine that matches skimage.transform.rotate(image, angle_deg, resize=False, center=None).
     Convention: points are (x, y) == (col, row). Positive angle = CCW.
@@ -89,20 +89,19 @@ def affine_like_skimage_no_resize(W: int, H: int, angle_deg: float) -> np.ndarra
     """
     theta = math.radians(angle_deg)
     c, s = math.cos(theta), math.sin(theta)
-    cx, cy = (W - 1) / 2.0, (H - 1) / 2.0
 
     # Forward mapping (raw -> rotated):
     # x' =  c*x - s*y + (1-c)*cx + s*cy
     # y' =  s*x + c*y + (1-c)*cy - s*cx
-    M = np.array([[ c, -s, (1 - c) * cx + s * cy],
-                  [ s,  c, (1 - c) * cy - s * cx]], dtype=float)
-    return M
+    
+    R = np.array([[c, -s],
+                  [s,  c]], dtype=float)
+    return R
 
 
-def apply_affine_points(M: np.ndarray, pts_xy: np.ndarray) -> np.ndarray:
+def apply_rotation(R: np.ndarray, pts_xy: np.ndarray) -> np.ndarray:
     """pts_xy: (N,2) of (x,y). Returns (N,2)."""
-    hom = np.c_[pts_xy, np.ones((pts_xy.shape[0], 1), dtype=pts_xy.dtype)]
-    return hom @ M.T
+    return pts_xy @ R
 
 def flatten_dict(d: Dict) -> List:
     """turns a nested dict into a 1D dict by concatenating keys with '.'"""
@@ -233,30 +232,37 @@ class StainDataset:
 
         return cls(root=folder, index=idx, dataframe=df)
     
-    def add_center_eccentricity(self) -> None:
-        """Add 'center' and 'eccentricity' columns to the dataframe."""
+    def add_all_data(self) -> None:
+        """Add all information about the cell to the """
         # centers = []
         # eccentricities = []
         properties_rows = []
         for obj_id in self.dataframe.index:
+            row = {}
             try:
                 dapi_img = self.get_channel(obj_id, "dapi", as_uint8=False)
                 labels = (dapi_img > 0).astype(np.uint8)
-                props = sizeshape_fn(labels, None)
-                # center_x = props['Center_X']
-                # center_y = props['Center_Y']
-                # eccentricity = props['Eccentricity']
-                # centers.append((center_x, center_y))
-                # eccentricities.append(eccentricity)
-                properties_rows.append(props)
+                for name, fn in measurements.items():
+                    res = fn(labels, dapi_img)
+                    if isinstance(res, dict):
+                        res_flat = flatten_dict(res)
+                        for k, v in res_flat.items():
+                            row[f"{name}.{k}"] = v[0]
+                    else:
+                        row[f"{name}"] = res[0]
+
+                properties_rows.append(row)
             except Exception as e:
-                print(f"[WARN] Could not compute size/shape for obj {obj_id}: {e}")
+                print(f"[WARN] Could not compute {name} for obj {obj_id}: {e}")
                 # centers.append((np.nan, np.nan))
                 # eccentricities.append(np.nan)
                 properties_rows.append({})
         
+        
         properties_df = pd.DataFrame(properties_rows)
+        properties_df.index = self.dataframe.index
         self.dataframe = pd.concat([self.dataframe, properties_df], axis=1)
+
         # self.dataframe['center'] = centers
         # self.dataframe['eccentricity'] = eccentricities
 
@@ -399,7 +405,7 @@ class StainDataset:
                                 out_col: str = "center_rot"):
         """Add rotated centers column matching your deskew rotation."""
         H, W = img_shape
-        M = affine_like_skimage_no_resize(W, H, angle_deg)
+        M = rotation_matrix(W, H, angle_deg)
         cp_df = self.dataframe
         idxs, pts = [], []
         for idx, v in cp_df["center"].items():
@@ -412,7 +418,7 @@ class StainDataset:
             return
 
         pts = np.asarray(pts, dtype=float)
-        pts_rot = apply_affine_points(M, pts)
+        pts_rot = apply_rotation(M, pts)
 
         for i, idx in enumerate(idxs):
             cp_df.at[idx, out_col] = (float(pts_rot[i, 0]), float(pts_rot[i, 1]))

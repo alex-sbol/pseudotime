@@ -38,9 +38,9 @@ def corridors_from_black_hull(img: np.ndarray, tiny_white_px: int = 16):
 def deskew_with_hull(img: np.ndarray):
     corr0, hull0 = corridors_from_black_hull(img)
     rot_deg, _ = estimate_corridor_angle(corr0)
-    img_rot  = transform.rotate(img,  rot_deg, order=1, preserve_range=True).astype(img.dtype)
-    corr_rot = transform.rotate(corr0, rot_deg, order=0, preserve_range=True).astype(np.uint8)
-    hull_rot = transform.rotate(hull0, rot_deg, order=0, preserve_range=True).astype(np.uint8)
+    img_rot  = transform.rotate(img,  rot_deg, order=1, preserve_range=True, resize=True).astype(img.dtype)
+    corr_rot = transform.rotate(corr0, rot_deg, order=0, preserve_range=True, resize=True).astype(np.uint8)
+    hull_rot = transform.rotate(hull0, rot_deg, order=0, preserve_range=True, resize=True).astype(np.uint8)
     return img_rot, corr_rot, hull_rot, rot_deg
 
 def detect_corridors_via_hull(corr_mask: np.ndarray,
@@ -119,3 +119,5 @@ if __name__ == "__main__":
     plt.axis('off')
     plt.show()
     bboxes
+
+

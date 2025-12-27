@@ -1,7 +1,7 @@
 from morphology_pipeline.segmentation.stain_dataset import (
     StainDataset,
-    affine_like_skimage_no_resize,
-    apply_affine_points,
+    rotation_matrix,
+    apply_rotation,
 )
 from morphology_pipeline.pseudotime import window_segments, descriptor_from_segments, slide_windows_with_matching
 from morphology_pipeline.corridor_mask import deskew_with_hull, detect_corridors_via_hull
@@ -10,17 +10,11 @@ import numpy as np
 from morphology_pipeline.pseudotime import process_corridors
 
 
-
-def create_dataset(background, folder):
-    SD = StainDataset.from_folder(folder)
-    #TODO extend this function to add other CP measure metrics
-    SD.add_center_eccentricity()
-    # TODO make them parameters
-    #This is pseudotome hyper params
-    #I could also make pseudotime 
+def create_dataset(background, folder, SD):
     m, L, stride, L_min = 2, 30, 1, 8
 
     rot_img, corr_mask, hull_mask, rot_deg = deskew_with_hull(background)
+    print(f"Deskewed by {rot_deg:.2f} degrees.")
 
     #list of bbox dicts {id, y0, y1, x0, x1}
     corridors = detect_corridors_via_hull(
@@ -29,19 +23,30 @@ def create_dataset(background, folder):
         min_band_height=5,
         merge_gap_px=3
     )
+
     print(f"Detected {len(corridors)} corridors.")
 
-    pseudotime = process_corridors(corr_mask, corridors, m, min_period=5, max_period=20)
-
-    #return pseudotime, corridors, corr_mask
+    try:
+        pseudotime = process_corridors(corr_mask, corridors, m, min_period=5, max_period=20)
+    except RuntimeError as e:
+        print(f"Error in pseudotime calculation: {e}")
+        pseudotime = {
+        "period": 7,           # now: normalized cycle length
+        "template": [1 ,2, 3, 6, 3, 2, 1],  # now: canonical intensity profile
+        "corridors": [{
+            "signal": [1, 2, 3, 4, 3, 2, 1] ,
+            "line_id": [0, 1, 2, 3, 4, 5, 6] ,
+            "confidence": [1, 1, 1, 1, 1, 1, 1] ,
+            "peaks": [0, 3, 6],
+        }] * len(corridors),
+    }
 
     
+    
     H0, W0 = background.shape[:2]
-    M = affine_like_skimage_no_resize(W0, H0, rot_deg)
+    R = rotation_matrix( rot_deg)
 
-    #This could be incorporated as a segmentation StainDataset method
-    if "center_rot" not in SD.dataframe.columns:
-        SD.dataframe["center_rot"] = None
+
 
     # scaling to match background if dataset used different dimensions
     h_ref = float(SD.dataframe["height"].iloc[0]) if "height" in SD.dataframe.columns else H0
@@ -49,39 +54,71 @@ def create_dataset(background, folder):
     sx = W0 / w_ref if w_ref else 1.0
     sy = H0 / h_ref if h_ref else 1.0
 
-    centers_rot_map: Dict[int, Tuple[float, float]] = {}
+    cols = [
+    "sizeshape.Center_X",
+    "sizeshape.Center_Y",
+    "sizeshape.BoundingBoxMinimum_X",
+    "sizeshape.BoundingBoxMaximum_X",
+    "sizeshape.BoundingBoxMinimum_Y",
+    "sizeshape.BoundingBoxMaximum_Y",
+    ]
 
-    for obj_id, val in SD.dataframe["center"].items():
-        if val is None:
-            continue
-
+    for obj_id, x_raw, y_raw, bbox_min_x, bbox_max_x, bbox_min_y, bbox_max_y in SD.dataframe[cols].itertuples(index=True):
         
-        #TODO This needs to be checked if the image is scaled correctly cuz the dapi image is not full size of the background,
-        #but this looks like we loose original location of the dapi cell
-        # val = (x, y)
-        x_raw, y_raw = val
-        x_arr = np.asarray(x_raw)
-        y_arr = np.asarray(y_raw)
-        if x_arr.size == 0 or y_arr.size == 0:
+
+        if x_raw is None or y_raw is None:
             continue
 
-        # scale, preserve orientation
-        y = float(y_arr.reshape(-1)[0]) * sy
-        x = float(x_arr.reshape(-1)[0]) * sx
+        cx = (h_ref - 1) / 2
+        cy = (w_ref - 1) / 2
 
-        pt_rot = apply_affine_points( 
-            M, np.asarray([[x, y]], dtype=float)
-        )[0]
+        x = x_raw - cx
+        y = y_raw - cy
 
-        x_rot, y_rot = float(pt_rot[0]), float(pt_rot[1])
-        centers_rot_map[obj_id] = (x_rot, y_rot)
-        SD.dataframe.at[obj_id, "center_rot"] = (x_rot, y_rot)
+        pt_rot_center = apply_rotation(R, np.array([[x, y]], dtype=float))[0]
+        #print(pt_rot_center.shape, pt_rot_center)
+        if pt_rot_center[0] is not None:
+            x_rot_c, y_rot_c = float(pt_rot_center[0]), float(pt_rot_center[1])
+        else:
+            x_rot_c, y_rot_c = None, None
+
+        corners = np.array([
+        [bbox_min_x, bbox_min_y],
+        [bbox_max_x, bbox_min_y],
+        [bbox_max_x, bbox_max_y],
+        [bbox_min_x, bbox_max_y],
+        ], dtype=float)
+
+
+        corners -= np.array([[cx, cy]], dtype=float)
+
+        rot_corners = apply_rotation(R, corners)
+
+        x_min_rot = rot_corners[:, 0].min()
+        y_min_rot = rot_corners[:, 1].min()
+        x_max_rot = rot_corners[:, 0].max()
+        y_max_rot = rot_corners[:, 1].max()
+
+        SD.dataframe.at[obj_id, "centered_center_x"] = x
+        SD.dataframe.at[obj_id, "centered_center_y"] = y
+
+        SD.dataframe.at[obj_id, "center_rot_x"] = x_rot_c
+        SD.dataframe.at[obj_id, "center_rot_y"] = y_rot_c
+
+        SD.dataframe.at[obj_id, "centered_bbox_min_x"] = bbox_min_x - cx
+        SD.dataframe.at[obj_id, "centered_bbox_min_y"] = bbox_min_y - cy
+        SD.dataframe.at[obj_id, "centered_bbox_max_x"] = bbox_max_x - cx
+        SD.dataframe.at[obj_id, "centered_bbox_max_y"] = bbox_max_y - cy
+
+        SD.dataframe.at[obj_id, "bbox_rot_min_x"] = x_min_rot
+        SD.dataframe.at[obj_id, "bbox_rot_min_y"] = y_min_rot
+        SD.dataframe.at[obj_id, "bbox_rot_max_x"] = x_max_rot
+        SD.dataframe.at[obj_id, "bbox_rot_max_y"] = y_max_rot
+
+
+
 
         #Now we need to assign pseudotime to each cell based on its rotated center location
         
 
-
-
-    
-
-    print("hello")
+    return pseudotime, corridors, corr_mask

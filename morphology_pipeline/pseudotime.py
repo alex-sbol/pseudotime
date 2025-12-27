@@ -19,54 +19,40 @@ def process_corridors(
     :param min_period: minimum possible period
     :param max_period: maximum possible period
     """
+
+
+
     signals = collect_corridors(mask_white, corridor_bbox, m)
 
-    T0 = estimate_period(signals, min_period, max_period)
+    T = estimate_period(signals, min_period, max_period)
 
-    candidates = range(
-        max(min_period, T0 - 2),
-        min(max_period, T0 + 3),
-    )
-    best_T = T0
-    best_score = -np.inf
 
-    for Tc in candidates:
-        score = alignment_score(signals, Tc)
-        if score > best_score:
-            best_score = score
-            best_T = Tc
-
-    T = best_T
-
-    peak_list = [detect_cycles(s, min_dist=T//2) for s in signals]
-    signal = max(signals, key=len)  # pick longest signal
+    peaks_list = [detect_cycles(s, min_period) for s in signals]
+    #signal = max(signals, key=len)  # pick longest signal
     #initial_template = fold_signal(signal, T)
-    initial_template = fold_cycles(signal, peak_list[signals.index(signal)], L=T)
+    idx = np.argmax([len(s) for s in signals])
+    
+    initial_template = fold_cycles(signals[idx], peaks_list[idx], T)
 
     
-    # offsets = []
-    # for s in signals:
-    #     p = fold_signal(s, T)
-    #     o = estimate_offset(p, initial_template)
-    #     offsets.append(o)
-
-    # template = refined_template(signals, offsets, T)
+    template = refined_template_cycles(signals, peaks_list, T)
 
     results = []
-    for i, s in enumerate(signals):
-        line_id = assign_line_ids(len(s), T, offsets[i])
+    for s, peaks in zip(signals, peaks_list):
+
+        line_id = assign_line_ids_cycles(len(s), peaks, T)
         confidence = compute_confidence(s, template, line_id)
-        line_id = apply_missing_policy(line_id, confidence, conf_threshold=0.4)
-        
+        line_id = apply_missing_policy(line_id, confidence)
+
         results.append({
             "signal": s,
             "line_id": line_id,
             "confidence": confidence,
-            "offset": offsets[i],
+            "peaks": peaks,
         })
 
     return {
-        "period": T,
+        "period": T,           # now: normalized cycle length
         "template": template,
         "corridors": results,
     }
@@ -97,6 +83,7 @@ def estimate_period(signals: List[np.ndarray],
     """
     Robust period estimate using mean autocorrelation.
     """
+
     min_len = min(len(s) for s in signals)
     X = np.stack([s[:min_len] for s in signals])
     mean_signal = X.mean(axis=0)
@@ -123,7 +110,9 @@ def fold_signal(signal: np.ndarray, T: int) -> np.ndarray:
     return acc / np.maximum(cnt, 1)
  
 def detect_cycles(signal, min_dist):
-    peaks, _ = find_peaks(signal, distance=min_dist)
+    prom = np.std(signal) * 2
+    h = signal.mean() + 1.0 * np.std(signal)
+    peaks, _ = find_peaks(signal, distance=min_dist, prominence=prom, height=h)
     return peaks
 
 def fold_cycles(signal, peaks, L):
@@ -182,6 +171,48 @@ def compute_confidence(signal, template, line_id, window=2):
         conf[t] = np.exp(-mse)
 
     return conf
+
+def assign_line_ids_cycles(signal_len, peaks, L):
+    """
+    Returns an integer array of shape (signal_len,)
+    Each element is the phase index (0..L-1) for that sample.
+    """
+    line_id = np.zeros(signal_len, dtype=int)
+
+    for a, b in zip(peaks[:-1], peaks[1:]):
+        seg_len = b - a
+        xs = np.linspace(0, 1, seg_len)
+        xq = np.linspace(0, 1, L)
+        # Map directly from xs to phase index 0..L-1
+        phase = np.floor(xs * (L-1)).astype(int)
+        line_id[a:b] = phase
+
+    # For any trailing region after the last peak:
+    if peaks[-1] < signal_len:
+        tail = signal_len - peaks[-1]
+        xs = np.linspace(0, 1, tail)
+        phase = np.floor(xs * (L-1)).astype(int)
+        line_id[peaks[-1]:] = phase
+
+    return line_id
+
+def refined_template_cycles(signals, peaks_list, L):
+    """
+    Refined template by averaging all cycles from all signals.
+    """
+    acc = np.zeros(L)
+    cnt = np.zeros(L)
+
+    for s, peaks in zip(signals, peaks_list):
+        for a, b in zip(peaks[:-1], peaks[1:]):
+            seg = s[a:b]
+            xs = np.linspace(0, 1, len(seg))
+            xq = np.linspace(0, 1, L)
+            seg_rs = np.interp(xq, xs, seg)
+            acc += seg_rs
+            cnt += 1
+
+    return acc / np.maximum(cnt, 1)
 
 
 def apply_missing_policy(
