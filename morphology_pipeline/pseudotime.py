@@ -37,12 +37,12 @@ def process_corridors(
     template = refined_template_cycles(signals, peaks_list, T)
 
     results = []
-    for s, peaks, bbox in zip(signals, peaks_list, selected_bboxes):
+    for s, peaks, bbox, length in zip(signals, peaks_list, selected_bboxes, lengths):
 
         line_id = assign_line_ids_cycles(len(s), peaks, T)
         confidence = compute_confidence(s, template, line_id)
         line_id = apply_missing_policy(line_id, confidence)
-        bbox["width"] = lengths
+        bbox["width"] = length
         bbox["line_id"] = line_id
         results.append({
             "signal": s,
@@ -68,18 +68,20 @@ def collect_corridors(mask_white, corridor_bbox, m) -> List[np.ndarray]:
         x0, x1 = bbox['x0'], bbox['x1']
         y0, y1 = bbox['y0'], bbox['y1']
         signal = []
+        length = []
         for x in range(x0, x1 + 1, m):
             col = mask_white[y0:y1 + 1, x]
             ys = np.flatnonzero(col)
             if ys.size == 0:
                 signal.append(0)
-                lengths.append(0)
+                length.append(0)
             else:
                 w = ys[-1] - ys[0] + 1
                 signal.append(w)
-                lengths.append(w)
+                length.append(w)
         signal = (signal - np.mean(signal)) / (np.std(signal) + 1e-8)
         signals.append(np.array(signal, dtype=float))
+        lengths.append(np.array(length, dtype=int))
         signal = (signal - np.mean(signal)) / (np.std(signal) + 1e-8) # normalize
     return signals, selected_bboxes, lengths
 

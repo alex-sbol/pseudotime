@@ -130,14 +130,17 @@ def create_dataset(background, folder, SD):
             if (bbox["x0"] <= x_rot_c + CRX <= bbox["x1"]) and (bbox["y0"] <= y_rot_c + CRY <= bbox["y1"]):
 
                 lh = int((x_min_rot + CRX - bbox["x0"]) // m)
-                rh = int(( x_max_rot + CRX - bbox["x1"]) // m) + 1
+                rh = int((x_max_rot + CRX - bbox["x0"]) // m) + 1
 
                 # if lh < 0 or rh < 0:
                 #     continue
 
                 line_ids = bbox["line_id"][lh:rh]
                 widthss = bbox["width"][lh:rh]
+                if len(line_ids) != len(widthss):
+                    print("Length mismatch in pseudotime assignment! " + str(obj_id) + f" {len(line_ids)} vs {len(widthss)} " + str(lh) + " " + str(rh))
                 if True:
+                    print(len(line_ids), len(widthss))
                     SD.dataframe.at[obj_id, "pseudotime"] = line_ids
                     SD.dataframe.at[obj_id, "pseudotime_widths"] = widthss
                 else:
