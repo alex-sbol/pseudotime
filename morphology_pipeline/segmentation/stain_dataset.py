@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import tifffile as tiff
 import matplotlib.pyplot as plt
+import cv2 as cv
 
 # ----------------------------
 # Constants & parsing
@@ -125,7 +126,7 @@ def flatten_dict(d: Dict) -> List:
 @dataclass
 class StainDataset:
     root: Path
-    index: Dict[int, Dict[str, Path]] = field(default_factory=dict)  # obj_id -> {channel: path}
+    #index: Dict[int, Dict[str, Path]] = field(default_factory=dict)  # obj_id -> {channel: path}
     dataframe: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     @classmethod
@@ -194,28 +195,70 @@ class StainDataset:
                 raise ValueError(f"Object {oid} missing channels: {missing}")
             if (not strict) and missing:
                 missing_total += 1
+            
+            dapi_img = tiff.imread(chmap.get("dapi")) if "dapi" in chmap else None
+            if dapi_img is None:
+                raise ValueError(f"Could not read DAPI image for obj {oid} to determine shape.")
+            imggray = cv.cvtColor(dapi_img, cv.COLOR_BGR2GRAY) if dapi_img.ndim == 3 else dapi_img
+            ret, thresh = cv.threshold(imggray, 10, 255, 0)
+            num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(thresh,connectivity=8)
+            areas = stats[:, cv.CC_STAT_AREA]
+            print("Areas:", areas)
+            min_area = 10  # tune this
 
-            row: dict[str, int | str] = {"obj_id": oid}
-            for c in CHANNELS_CANON:
-                row[f"path_{c}"] = str(chmap.get(c, "")) if c in chmap else ""
+            valid_labels = [
+                i for i in range(1, num_labels)  # skip background
+                if stats[i, cv.CC_STAT_AREA] >= min_area
+            ]
+            h, w = thresh.shape
+            vis = np.zeros((h, w), dtype=np.uint8)
+            rng = np.random.default_rng(seed=42)
+            for lbl in valid_labels:
+                mask = (labels == lbl)
+                color = int(rng.integers(1, 255))
+                vis[mask] = color
 
-            # Derive (H,W) from the first available channel in canonical order
-            h = w = None
-            for c in CHANNELS_CANON:
-                p = chmap.get(c)
-                if p:
-                    try:
-                        arr = tiff.imread(p)
-                        if arr.ndim >= 2:
-                            h, w = int(arr.shape[-2]), int(arr.shape[-1])
-                            break
-                    except Exception:
-                        continue
-            if h is None or w is None:
-                raise ValueError(f"Could not read image shape for obj {oid} from any available channel.")
-            row["height"], row["width"] = h, w
-            row["channels"] = ",".join(sorted(chmap.keys()))
-            records.append(row)
+            #Now each label becomes an object
+                oid = oid * 10000 + lbl
+                row: dict[str, int | str] = {"obj_id": oid}  # new obj_id
+
+                for c in CHANNELS_CANON:
+                    if c == "dapi":
+                        orig_path = chmap.get(c)
+                        out_dir = orig_path.parent / "separated dapi"
+                        out_dir.mkdir(exist_ok=True)
+
+                        mask = (labels == lbl).astype(np.uint8)
+
+                        kernel = np.ones((3, 3), np.uint8)
+                        mask_dilated = cv.dilate(mask, kernel, iterations=3)
+
+                        out_img = dapi_img * mask_dilated.astype(dapi_img.dtype)
+
+                        out_path = out_dir / f"obj{row['obj_id']}_stainDAPI.tif"
+                        row[f"path_{c}"] = str(out_path)
+                        tiff.imwrite(out_path, out_img)
+                    else:
+                        #continue
+                        row[f"path_{c}"] = str(chmap.get(c, "")) if c in chmap else ""
+
+                # Derive (H,W) from the first available channel in canonical order
+                h = w = None
+                for c in CHANNELS_CANON:
+                    p = chmap.get(c)
+                    if p:
+                        try:
+                            arr = tiff.imread(p)
+                            if arr.ndim >= 2:
+                                h, w = int(arr.shape[-2]), int(arr.shape[-1])
+                                break
+                        except Exception:
+                            continue
+                if h is None or w is None:
+                    raise ValueError(f"Could not read image shape for obj {oid} from any available channel.")
+                row["height"], row["width"] = h, w
+                row["channels"] = ",".join(sorted(chmap.keys()))
+                records.append(row)
 
         df = pd.DataFrame(records).set_index("obj_id").sort_index()
 
@@ -230,7 +273,7 @@ class StainDataset:
         if (not strict) and missing_total:
             print(f"[WARN] {missing_total} objects are missing one or more channels.")
 
-        return cls(root=folder, index=idx, dataframe=df)
+        return cls(root=folder, dataframe=df)
     
     def add_all_data(self) -> None:
         """Add all information about the cell to the """
@@ -307,7 +350,7 @@ class StainDataset:
 
     def get_channel(self, obj_id: int, channel: str, *, as_uint8: bool = False) -> np.ndarray:
         c = _canon_channel(channel)
-        p = self.index.get(obj_id, {}).get(c)
+        p = self.dataframe.at[obj_id, f"path_{c}"]
         if p is None:
             raise KeyError(f"Channel '{c}' not found for obj {obj_id}. Available: {self.available_channels(obj_id)}")
         arr = tiff.imread(p)
