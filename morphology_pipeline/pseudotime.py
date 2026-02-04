@@ -100,7 +100,7 @@ def estimate_period(signals: List[np.ndarray],
     acf = np.correlate(mean_signal, mean_signal, mode="full")
     acf = acf[len(acf)//2:]
 
-    peaks, _ = find_peaks(acf[min_period:max_period])
+    peaks, _ = find_peaks(acf[min_period:max_period], distance=min_period)
     if len(peaks) == 0:
         raise RuntimeError("No period peak found")
 
@@ -184,16 +184,16 @@ def compute_confidence(signal, template, line_id, window=2):
 def assign_line_ids_cycles(signal_len, peaks, L):
     """
     Returns an integer array of shape (signal_len,)
-    Each element is the phase index (0..L-1) for that sample.
+    Each element is the phase index (0..L) for that sample.
     """
     line_id = np.zeros(signal_len, dtype=int)
 
     for a, b in zip(peaks[:-1], peaks[1:]):
         seg_len = b - a
-        xs = np.linspace(0, 1, seg_len)
+        xs = np.linspace(0, 1, seg_len, endpoint=False)
         xq = np.linspace(0, 1, L)
-        # Map directly from xs to phase index 0..L-1
-        phase = np.floor(xs * (L-1)).astype(int)
+        # Map directly from xs to phase index 0..L
+        phase = np.floor(xs * (L)).astype(int)
         line_id[a:b] = phase
 
     # For any trailing region after the last peak:

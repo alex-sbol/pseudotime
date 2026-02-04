@@ -132,7 +132,10 @@ def align_corridors(img_gray: np.ndarray,
     def f(theta):
         return _objective(theta, mask, orientation=orientation, do_close=do_close, close_frac=close_frac)
     # golden-section search
-    theta_gs, J_gs, iters = _golden_section_max(f, -90.0, 90.0, tol=tol_deg, max_iter=200)
+    #theta_gs, J_gs, iters = _golden_section_max(f, -90.0, 90.0, tol=tol_deg, max_iter=200)
+    thetas, Js = scan_objective(f, mask, orientation, do_close, close_frac)
+    idx_best = np.argmax(np.array(Js))
+    theta_gs = thetas[idx_best]
     # local quadratic refinement
     theta_refined = _quadratic_refine(f, theta_gs, delta=0.2)
     J_best = f(theta_refined)
@@ -141,7 +144,6 @@ def align_corridors(img_gray: np.ndarray,
     info = {
         "J_best": float(J_best),
         "theta_gs": float(theta_gs),
-        "iters": int(iters),
         "params": {
             "orientation": orientation,
             "downscale": downscale,
@@ -152,6 +154,15 @@ def align_corridors(img_gray: np.ndarray,
         }
     }
     return float(theta_refined), rotated, info
+
+# ============================ diagnostics ============================
+
+def scan_objective(f, mask, orientation, do_close, close_frac):
+    thetas = np.linspace(-90, 90, 721)  # 0.25° resolution
+    Js = np.array([f(theta) for theta in thetas])
+    return thetas, np.array(Js)   
+
+
 
 #API
 def estimate_corridor_angle(img_gray, **kwargs):

@@ -27,7 +27,7 @@ def create_dataset(background, folder, SD):
     print(f"Detected {len(corridors)} corridors.")
 
     try:
-        pseudotime = process_corridors(corr_mask, corridors, m, min_period=5, max_period=20)
+        pseudotime = process_corridors(corr_mask, corridors, m, min_period=5, max_period=30)
     except RuntimeError as e:
         print(f"Error in pseudotime calculation: {e}")
         pseudotime = {
@@ -40,6 +40,8 @@ def create_dataset(background, folder, SD):
             "peaks": [0, 3, 6],
         }] * len(corridors),
     }
+        
+    #return pseudotime, corridors, corr_mask
 
     
     

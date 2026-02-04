@@ -203,8 +203,8 @@ class StainDataset:
             ret, thresh = cv.threshold(imggray, 10, 255, 0)
             num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(thresh,connectivity=8)
             areas = stats[:, cv.CC_STAT_AREA]
-            print("Areas:", areas)
-            min_area = 10  # tune this
+            print("Areas:", areas, "for obj", oid)
+            min_area = 50  # tune this
 
             valid_labels = [
                 i for i in range(1, num_labels)  # skip background
@@ -284,15 +284,35 @@ class StainDataset:
             row = {}
             try:
                 dapi_img = self.get_channel(obj_id, "dapi", as_uint8=False)
-                labels = (dapi_img > 0).astype(np.uint8)
+                yapi_img = self.get_channel(obj_id, "yap", as_uint8=False)
+                actin_img = self.get_channel(obj_id, "actin", as_uint8=False)
+                labels_dapi = (dapi_img > 0).astype(np.uint8)
+                labels_yapi = (yapi_img > 0).astype(np.uint8)
+                labels_actin = (actin_img > 0).astype(np.uint8)
                 for name, fn in measurements.items():
-                    res = fn(labels, dapi_img)
-                    if isinstance(res, dict):
-                        res_flat = flatten_dict(res)
+                    res_dapi = fn(labels_dapi, dapi_img)
+                    res_yapi = fn(labels_yapi, yapi_img)
+                    res_actin = fn(labels_actin, actin_img)
+                    if isinstance(res_dapi, dict):
+                        res_flat = flatten_dict(res_dapi)
                         for k, v in res_flat.items():
-                            row[f"{name}.{k}"] = v[0]
+                            row[f"dapi.{name}.{k}"] = v[0]
                     else:
-                        row[f"{name}"] = res[0]
+                        row[f"dapi.{name}"] = res_dapi[0]
+
+                    if isinstance(res_yapi, dict):
+                        res_flat = flatten_dict(res_yapi)
+                        for k, v in res_flat.items():
+                            row[f"yapi.{name}.{k}"] = v[0]
+                    else:
+                        row[f"yapi.{name}"] = res_yapi[0]
+
+                    if isinstance(res_actin, dict):
+                        res_flat = flatten_dict(res_actin)
+                        for k, v in res_flat.items():
+                            row[f"actin.{name}.{k}"] = v[0]
+                    else:
+                        row[f"actin.{name}"] = res_actin[0]
 
                 properties_rows.append(row)
             except Exception as e:
