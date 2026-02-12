@@ -126,7 +126,6 @@ def flatten_dict(d: Dict) -> List:
 @dataclass
 class StainDataset:
     root: Path
-    #index: Dict[int, Dict[str, Path]] = field(default_factory=dict)  # obj_id -> {channel: path}
     dataframe: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     @classmethod
@@ -134,148 +133,69 @@ class StainDataset:
         cls,
         folder: Union[str, Path],
         *,
+        min_area: int = 50,
         strict: bool = True,
-        drop_incomplete: bool = False,
     ) -> "StainDataset":
-        """Create dataset by scanning a folder.
 
-        Parameters
-        ----------
-        folder : str | Path
-            Directory with TIFF files.
-        strict : bool
-            If True (default), every object must have all 4 channels; otherwise raises.
-            If False, missing channels are allowed but warned and left empty in DataFrame.
-        drop_incomplete : bool
-            Only used when strict=False. If True, rows missing any channel are dropped.
-
-        Returns
-        -------
-        StainDataset
-        """
         folder = Path(folder).expanduser().resolve()
         if not folder.exists() or not folder.is_dir():
-            raise FileNotFoundError(f"Folder not found or not a directory: {folder}")
+            raise FileNotFoundError(f"Folder not found: {folder}")
 
+        # 1. Scan folder and build object → channel mapping
         idx: Dict[int, Dict[str, Path]] = {}
-        duplicates: List[Tuple[int, str, Path, Path]] = []
 
-        # Non-recursive scan; only files directly inside `folder`
         for f in sorted(folder.iterdir()):
             if not f.is_file():
                 continue
             if f.suffix.lower() not in (".tif", ".tiff"):
                 continue
+
             m = _FNAME_RE.match(f.name)
             if not m:
                 continue
 
             oid = int(m.group("obj"))
-
             chan = _canon_channel(m.group("chan"))
 
-            d = idx.setdefault(oid, {})
-            if chan in d:
-                duplicates.append((oid, chan, d[chan], f))
-                # keep the first; ignore later duplicates to keep behavior simple
-                continue
-            d[chan] = f.resolve()
+            idx.setdefault(oid, {})
+            if chan not in idx[oid]:
+                idx[oid][chan] = f.resolve()
 
-        if duplicates:
-            print(f"[WARN] Found {len(duplicates)} duplicate files for the same obj/channel. "
-                  "Keeping the first occurrence. Examples:")
-            for k in duplicates[:5]:
-                print("   obj", k[0], "chan", k[1], "kept:", k[2].name, "ignored:", k[3].name)
+        if strict:
+            for oid, chmap in idx.items():
+                missing = [c for c in ("dapi", "yap", "actin") if c not in chmap]
+                if missing:
+                    raise ValueError(f"Object {oid} missing channels: {missing}")
 
+        # 2. Run segmentation pipeline
         records = []
-        missing_total = 0
+
         for oid, chmap in sorted(idx.items()):
-            missing = [c for c in CHANNELS_CANON if c not in chmap]
-            if strict and missing:
-                raise ValueError(f"Object {oid} missing channels: {missing}")
-            if (not strict) and missing:
-                missing_total += 1
-            
-            dapi_img = tiff.imread(chmap.get("dapi")) if "dapi" in chmap else None
-            if dapi_img is None:
-                raise ValueError(f"Could not read DAPI image for obj {oid} to determine shape.")
-            imggray = cv.cvtColor(dapi_img, cv.COLOR_BGR2GRAY) if dapi_img.ndim == 3 else dapi_img
-            ret, thresh = cv.threshold(imggray, 10, 255, 0)
-            num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(thresh,connectivity=8)
-            areas = stats[:, cv.CC_STAT_AREA]
-            print("Areas:", areas, "for obj", oid)
-            min_area = 50  # tune this
 
-            valid_labels = [
-                i for i in range(1, num_labels)  # skip background
-                if stats[i, cv.CC_STAT_AREA] >= min_area
-            ]
-            h, w = thresh.shape
-            vis = np.zeros((h, w), dtype=np.uint8)
-            rng = np.random.default_rng(seed=42)
-            for lbl in valid_labels:
-                mask = (labels == lbl)
-                color = int(rng.integers(1, 255))
-                vis[mask] = color
+            seg_dict = labels_from_chmap(
+                oid,
+                chmap,
+                min_area=min_area
+            )
 
-            #Now each label becomes an object
-                oid = oid * 10000 + lbl
-                row: dict[str, int | str] = {"obj_id": oid}  # new obj_id
+            rows = save_isolated_strains(
+                oid,
+                chmap,
+                seg_dict
+            )
 
-                for c in CHANNELS_CANON:
-                    if c == "dapi":
-                        orig_path = chmap.get(c)
-                        out_dir = orig_path.parent / "separated dapi"
-                        out_dir.mkdir(exist_ok=True)
+            records.extend(rows)
 
-                        mask = (labels == lbl).astype(np.uint8)
+        if not records:
+            raise RuntimeError("No segmented objects found.")
 
-                        kernel = np.ones((3, 3), np.uint8)
-                        mask_dilated = cv.dilate(mask, kernel, iterations=3)
-
-                        out_img = dapi_img * mask_dilated.astype(dapi_img.dtype)
-
-                        out_path = out_dir / f"obj{row['obj_id']}_stainDAPI.tif"
-                        row[f"path_{c}"] = str(out_path)
-                        tiff.imwrite(out_path, out_img)
-                    else:
-                        #continue
-                        row[f"path_{c}"] = str(chmap.get(c, "")) if c in chmap else ""
-
-                # Derive (H,W) from the first available channel in canonical order
-                h = w = None
-                for c in CHANNELS_CANON:
-                    p = chmap.get(c)
-                    if p:
-                        try:
-                            arr = tiff.imread(p)
-                            if arr.ndim >= 2:
-                                h, w = int(arr.shape[-2]), int(arr.shape[-1])
-                                break
-                        except Exception:
-                            continue
-                if h is None or w is None:
-                    raise ValueError(f"Could not read image shape for obj {oid} from any available channel.")
-                row["height"], row["width"] = h, w
-                row["channels"] = ",".join(sorted(chmap.keys()))
-                records.append(row)
-
-        df = pd.DataFrame(records).set_index("obj_id").sort_index()
-
-        if (not strict) and drop_incomplete:
-            need = [f"path_{c}" for c in CHANNELS_CANON]
-            before = len(df)
-            df = df[(df[need] != "").all(axis=1)]
-            after = len(df)
-            if before != after:
-                print(f"[INFO] Dropped {before-after} incomplete objects (drop_incomplete=True).")
-
-        if (not strict) and missing_total:
-            print(f"[WARN] {missing_total} objects are missing one or more channels.")
+        # 3. Build DataFrame
+        df = pd.DataFrame(records)
+        df = df.set_index("obj_id").sort_index()
 
         return cls(root=folder, dataframe=df)
-    
-    def add_all_data(self) -> None:
+
+    def  add_all_data(self) -> None:
         """Add all information about the cell to the """
         # centers = []
         # eccentricities = []
@@ -486,6 +406,318 @@ class StainDataset:
         for i, idx in enumerate(idxs):
             cp_df.at[idx, out_col] = (float(pts_rot[i, 0]), float(pts_rot[i, 1]))
 
+    @staticmethod
+    def labels_from_chmap(oid, chmap, min_area=50):
+        """
+        Return one selected label for each channel: dapi, yap, actin.
+        The selection is:
+            - threshold channel
+            - connected components
+            - filter by min_area
+            - pick the component whose centroid is closest to image center
+        """
+
+        # --- Load images (error if missing) -------------------------------------
+        def load_gray(channel):
+            path = chmap.get(channel)
+            if path is None:
+                raise ValueError(f"Object {oid} missing channel '{channel}'")
+            img = tiff.imread(path)
+            if img.ndim == 3:
+                img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+            return img
+
+        dapi_grey = load_gray("dapi")
+        yap_grey = load_gray("yap")
+        actin_grey = load_gray("actin")
+
+        # All channels are assumed same shape; use DAPI for center reference
+        H, W = dapi_grey.shape
+        img_center = np.array([W / 2, H / 2])
+
+        # --- Helper: label for image -------------------------------------
+        def get_single_label(grey_img):
+            # Threshold
+            _, thresh = cv.threshold(grey_img, 10, 255, 0)
+
+            # Connected components
+            num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(
+                thresh, connectivity=8
+            )
+
+            # Filter by min area (skip background, index 0)
+            valid = [
+                i for i in range(1, num_labels)
+                if stats[i, cv.CC_STAT_AREA] >= min_area
+            ]
+            if not valid:
+                return None  # or raise
+
+            # Compute distances to center = pick closest
+            centers = np.array([centroids[i] for i in valid])  # [[cx, cy], ...]
+            dists = np.linalg.norm(centers - img_center, axis=1)
+            chosen_idx = valid[np.argmin(dists)]
+
+            return chosen_idx, labels, stats, centroids
+
+        # --- Run for each channel -----------------------------------------------
+        dapi_label, dapi_labels_img, dapi_stats, dapi_centroids = get_single_label(dapi_grey)
+        yap_label, yap_labels_img, yap_stats, yap_centroids = get_single_label(yap_grey)
+        actin_label, actin_labels_img, actin_stats, actin_centroids = get_single_label(actin_grey)
+
+        #
+
+        # --- Return structured result -------------------------------------------
+        return {
+            "dapi": {
+                "label": dapi_label,
+                "labels_img": dapi_labels_img,
+                "stats": dapi_stats,
+                "centroids": dapi_centroids,
+            },
+            "yap": {
+                "label": yap_label,
+                "labels_img": yap_labels_img,
+                "stats": yap_stats,
+                "centroids": yap_centroids,
+            },
+            "actin": {
+                "label": actin_label,
+                "labels_img": actin_labels_img,
+                "stats": actin_stats,
+                "centroids": actin_centroids,
+            },
+        }
+
+    @staticmethod
+    def rows_from_labels(oid, chmap, seg_dict):
+        # look at this thing and my pipeline and adapt this function,
+        # such that no further refactoring would be needed during the run
+
+        # Requirments
+        #
+
+        rows = []
+
+        for chan, info in seg_dict.items():
+            label = info['label']
+            stats = info['stats']
+            centroids = info['centroids']
+
+            if label is None:
+                continue
+
+            x = int(stats[label, cv.CC_STAT_LEFT])
+            y = int(stats[label, cv.CC_STAT_TOP])
+            w = int(stats[label, cv.CC_STAT_WIDTH])
+            h = int(stats[label, cv.CC_STAT_HEIGHT])
+            area = int(stats[label, cv.CC_STAT_AREA])
+
+            cx, cy = centroids[label]  # float centroid
+
+            row = {
+                "obj_id": oid,
+                "channel": chan,
+
+                # geometric info
+                "bbox_x": x,
+                "bbox_y": y,
+                "bbox_w": w,
+                "bbox_h": h,
+                "area": area,
+
+                # centroid
+                "centroid_x": float(cx),
+                "centroid_y": float(cy),
+
+                # source image
+                "path": str(chmap.get(chan, "")),
+
+                # shape metadata
+                "height": H,
+                "width": W,
+            }
+
+            rows.append(row)
+
+        return rows
+
+    @staticmethod
+    def save_isolated_strains():
+
+        return
+
+    @staticmethod
+    def labels_from_chmap(oid, chmap, min_area=50):
+        """
+        Select one connected component for each stain channel (dapi, yap, actin)
+        based on:
+            - thresholding
+            - connected components
+            - filtering by min area
+            - choosing component closest to image center
+        """
+
+        def load_gray(channel):
+            p = chmap.get(channel)
+            if p is None:
+                raise ValueError(f"Object {oid} missing channel '{channel}'")
+            img = tiff.imread(p)
+            return cv.cvtColor(img, cv.COLOR_BGR2GRAY) if img.ndim == 3 else img
+
+        dapi_grey = load_gray("dapi")
+        yap_grey = load_gray("yap")
+        actin_grey = load_gray("actin")
+
+        H, W = dapi_grey.shape
+        img_center = np.array([W / 2, H / 2])
+
+        def get_single_label(grey_img):
+            _, thresh = cv.threshold(grey_img, 10, 255, 0)
+
+            num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(
+                thresh, connectivity=8
+            )
+
+            valid = [
+                i for i in range(1, num_labels)
+                if stats[i, cv.CC_STAT_AREA] >= min_area
+            ]
+            if not valid:
+                return None, None, None, None
+
+            centers = np.array([centroids[i] for i in valid])
+            dists = np.linalg.norm(centers - img_center, axis=1)
+            chosen_idx = valid[np.argmin(dists)]
+
+            return chosen_idx, labels, stats, centroids
+
+        dapi_label, dapi_labels_img, dapi_stats, dapi_centroids = get_single_label(dapi_grey)
+        yap_label, yap_labels_img, yap_stats, yap_centroids = get_single_label(yap_grey)
+        actin_label, actin_labels_img, actin_stats, actin_centroids = get_single_label(actin_grey)
+
+        return {
+            "dapi": {"label": dapi_label, "labels_img": dapi_labels_img, "stats": dapi_stats,
+                     "centroids": dapi_centroids},
+            "yap": {"label": yap_label, "labels_img": yap_labels_img, "stats": yap_stats, "centroids": yap_centroids},
+            "actin": {"label": actin_label, "labels_img": actin_labels_img, "stats": actin_stats,
+                      "centroids": actin_centroids},
+        }
+
+    @staticmethod
+    def rows_from_labels(oid, chmap, seg_dict):
+        rows = []
+
+        # infer shape
+        H = W = None
+        for c in ("dapi", "yap", "actin"):
+            p = chmap.get(c)
+            if p:
+                img = tiff.imread(p)
+                H, W = img.shape[:2]
+                break
+        if H is None:
+            raise ValueError(f"Cannot infer shape for object {oid}")
+
+        for chan, info in seg_dict.items():
+            label = info["label"]
+            if label is None:
+                continue
+
+            stats = info["stats"]
+            centroids = info["centroids"]
+
+            x = int(stats[label, cv.CC_STAT_LEFT])
+            y = int(stats[label, cv.CC_STAT_TOP])
+            w = int(stats[label, cv.CC_STAT_WIDTH])
+            h = int(stats[label, cv.CC_STAT_HEIGHT])
+            area = int(stats[label, cv.CC_STAT_AREA])
+
+            cx, cy = centroids[label]
+
+            rows.append({
+                "obj_id": oid,
+                "channel": chan,
+                "bbox_x": x,
+                "bbox_y": y,
+                "bbox_w": w,
+                "bbox_h": h,
+                "area": area,
+                "centroid_x": float(cx),
+                "centroid_y": float(cy),
+                "path": str(chmap.get(chan, "")),
+                "height": H,
+                "width": W,
+            })
+
+        return rows
+
+    @staticmethod
+    def save_isolated_strains(oid, chmap, seg_dict, *, dilate_iter=3):
+        rows = []
+
+        # determine shape
+        H = W = None
+        for c in ("dapi", "yap", "actin"):
+            p = chmap.get(c)
+            if p:
+                arr = tiff.imread(p)
+                H, W = arr.shape[:2]
+                break
+
+        for chan, info in seg_dict.items():
+            label = info["label"]
+            if label is None:
+                continue
+
+            labels_img = info["labels_img"]
+            stats = info["stats"]
+            centroids = info["centroids"]
+
+            new_oid = oid * 10000 + label
+            in_path = chmap[chan]
+            img = tiff.imread(in_path)
+
+            mask = (labels_img == label).astype(np.uint8)
+
+            if dilate_iter > 0:
+                kernel = np.ones((3, 3), np.uint8)
+                mask = cv.dilate(mask, kernel, iterations=dilate_iter)
+
+            out_img = img * mask.astype(img.dtype)
+
+            out_dir = Path(in_path).parent / f"isolated_{chan}"
+            out_dir.mkdir(exist_ok=True)
+            out_path = out_dir / f"obj{new_oid}_stain{chan.upper()}.tif"
+            tiff.imwrite(out_path, out_img)
+
+            x = int(stats[label, cv.CC_STAT_LEFT])
+            y = int(stats[label, cv.CC_STAT_TOP])
+            w = int(stats[label, cv.CC_STAT_WIDTH])
+            h = int(stats[label, cv.CC_STAT_HEIGHT])
+            area = int(stats[label, cv.CC_STAT_AREA])
+            cx, cy = centroids[label]
+
+            rows.append({
+                "obj_id": new_oid,
+                "channel": chan,
+                "bbox_x": x,
+                "bbox_y": y,
+                "bbox_w": w,
+                "bbox_h": h,
+                "area": area,
+                "centroid_x": float(cx),
+                "centroid_y": float(cy),
+                "path": str(out_path),
+                "height": H,
+                "width": W,
+            })
+
+        return rows
+
 # Convenience
 def build_dataframe(folder: Union[str, Path], *, strict: bool = True, drop_incomplete: bool = False) -> pd.DataFrame:
     return StainDataset.from_folder(folder, strict=strict, drop_incomplete=drop_incomplete).dataframe
+
+
+

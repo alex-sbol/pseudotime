@@ -1,7 +1,4 @@
 from stain_dataset import StainDataset
-from skimage.filters import threshold_otsu, gaussian
-from skimage.morphology import remove_small_holes
-from scipy.ndimage import distance_transform_edt
 import numpy as np
 import matplotlib.pyplot as plt
 

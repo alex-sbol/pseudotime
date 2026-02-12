@@ -1,7 +1,7 @@
 import numpy as np
 from numpy.fft import fft, ifft
 from scipy.signal import find_peaks
-from typing import Dict, List, Tuple
+from typing import List
 
 def process_corridors(
     mask_white,

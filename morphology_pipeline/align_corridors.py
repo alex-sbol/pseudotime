@@ -1,7 +1,6 @@
 
 import cv2
 import numpy as np
-import math
 from typing import Literal, Tuple, Dict, Any
 
 def _rotate_canvas(img: np.ndarray, ang_deg: float, border_value: int = 0) -> np.ndarray:
@@ -171,7 +170,8 @@ def estimate_corridor_angle(img_gray, **kwargs):
 
 # --- Optional CLI ---
 def _cli():
-    import argparse, sys
+    import argparse
+    import sys
     ap = argparse.ArgumentParser(description="Align repeating corridor bands by rotation optimization.")
     ap.add_argument("input", help="input image (grayscale preferred)")
     ap.add_argument("-o","--output", default="aligned.png", help="output path")

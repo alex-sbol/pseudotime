@@ -1,5 +1,4 @@
-﻿import pandas as pd
-
+﻿
 from morphology_pipeline.analysis import compute_variability, detect_regions, records_to_dataframe
 from morphology_pipeline.config import AnalysisConfig
 from morphology_pipeline.data_models import CellRecord

@@ -10,7 +10,7 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-from skimage import io, color, filters, morphology, transform, feature
+from skimage import io, color, filters, morphology, transform
 from morphology_pipeline.align_corridors import estimate_corridor_angle
 
 # ---------------- helpers ----------------

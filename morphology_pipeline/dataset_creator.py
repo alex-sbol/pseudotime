@@ -1,11 +1,8 @@
 from morphology_pipeline.segmentation.stain_dataset import (
-    StainDataset,
     rotation_matrix,
     apply_rotation,
 )
-from morphology_pipeline.pseudotime import window_segments, descriptor_from_segments, slide_windows_with_matching
 from morphology_pipeline.corridor_mask import deskew_with_hull, detect_corridors_via_hull
-from typing import List, Dict, Tuple
 import numpy as np
 from morphology_pipeline.pseudotime import process_corridors
 

@@ -1,5 +1,4 @@
-﻿import pathlib
-
+﻿
 from morphology_pipeline.config import load_config
 
 
