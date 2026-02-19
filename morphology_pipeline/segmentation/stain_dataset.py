@@ -172,13 +172,13 @@ class StainDataset:
 
         for oid, chmap in sorted(idx.items()):
 
-            seg_dict = labels_from_chmap(
+            seg_dict = cls.labels_from_chmap(
                 oid,
                 chmap,
                 min_area=min_area
             )
 
-            rows = save_isolated_strains(
+            rows = cls.save_isolated_strains(
                 oid,
                 chmap,
                 seg_dict
@@ -494,8 +494,7 @@ class StainDataset:
         # look at this thing and my pipeline and adapt this function,
         # such that no further refactoring would be needed during the run
 
-        # Requirments
-        #
+        H, W = seg_dict[oid].shape
 
         rows = []
 
@@ -717,7 +716,7 @@ class StainDataset:
 
 # Convenience
 def build_dataframe(folder: Union[str, Path], *, strict: bool = True, drop_incomplete: bool = False) -> pd.DataFrame:
-    return StainDataset.from_folder(folder, strict=strict, drop_incomplete=drop_incomplete).dataframe
+    return StainDataset.from_folder(folder, strict=strict).dataframe
 
 
 
