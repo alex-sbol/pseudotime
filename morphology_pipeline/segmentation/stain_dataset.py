@@ -219,8 +219,8 @@ class StainDataset:
                 vis[mask] = color
 
             #Now each label becomes an object
-                oid = oid * 10000 + lbl
-                row: dict[str, int | str] = {"obj_id": oid}  # new obj_id
+                new_oid = oid * 10000 + lbl
+                row: dict[str, int | str] = {"obj_id": new_oid}  # new obj_id
 
                 for c in CHANNELS_CANON:
                     if c == "dapi":
