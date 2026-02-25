@@ -33,3 +33,7 @@ coverage.xml
 Thumbs.db
 dump.json
 res/
+
+datasets/
+sorted_dapi_images*/
+*.7z
