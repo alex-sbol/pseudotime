@@ -114,6 +114,7 @@ def rotation_viz_with_dapi(
     BG, rotated, SD, blend_mode="add", alpha=0.5,
     max_rows=30, dot_size=3
 ):
+    import matplotlib.cm as cm
     DF = SD.dataframe
 
     BG = BG.astype(np.float32)
