@@ -35,5 +35,5 @@ dump.json
 res/
 
 datasets/
-sorted_dapi_images*/
+sorted_*/
 *.7z
