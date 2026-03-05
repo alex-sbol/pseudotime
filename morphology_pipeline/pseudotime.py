@@ -104,7 +104,9 @@ def estimate_period(signals: List[np.ndarray],
     if len(peaks) == 0:
         raise RuntimeError("No period peak found")
 
-    T = peaks[0] + min_period
+    best = peaks[np.argmax(acf[min_period:max_period][peaks])]
+    T = best + min_period
+    #T = peaks[0] + min_period
     return T
 
 def fold_signal(signal: np.ndarray, T: int) -> np.ndarray:
