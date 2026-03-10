@@ -123,6 +123,7 @@ def create_dataset(background, folder, SD):
 
         SD.dataframe.at[obj_id, "pseudotime"] = None
         SD.dataframe.at[obj_id, "pseudotime_widths"] = None
+        SD.dataframe.at[obj_id, "pseudotime_center_bin"] = None
 
         for corridor_info in pseudotime["corridors"]:
             bbox = corridor_info["bbox"]
@@ -135,6 +136,13 @@ def create_dataset(background, folder, SD):
                 # if lh < 0 or rh < 0:
                 #     continue
 
+                center_bin = int((x_rot_c + CRX - bbox["x0"]) // m)
+
+                if 0 <= center_bin < len(bbox["line_id"]):
+                    SD.dataframe.at[obj_id, "pseudotime_center_bin"] = bbox["line_id"][center_bin]
+                else:
+                    SD.dataframe.at[obj_id, "pseudotime_center_bin"] = None
+                    
                 line_ids = bbox["line_id"][lh:rh]
                 widthss = bbox["width"][lh:rh]
                 if len(line_ids) != len(widthss):

@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from skimage.io import imread
 from matplotlib.patches import Rectangle
+import datetime
 
 def plot_pseudotime_for_cells(df, num_cells=10):
     num_cells = min(num_cells, len(df))
@@ -341,7 +342,9 @@ def visualize_overlay(
         period_top = None
         period_bottom = None
 
-
+        #This is we enumurate though all lines and detect the start and end of each period, which is defined as a contiguous segment where line_id goes from 0 to T-1. We then draw a colored rectangle for each period, and vertical lines for each line_id with color based on the line_id value.
+        #TODO extract period image for background 
+        n = 0
         for i, x in enumerate(xs):
             
             if i >= len(line_id):
@@ -371,6 +374,22 @@ def visualize_overlay(
                 width = x - period_start_x
                 height = period_bottom - period_top
 
+                if n == 7:
+                #period crop
+                    y_min = y0
+                    y_max = y1
+
+                    x_min = period_start_x
+                    x_max = x
+
+                    period_img_crop = img[y_min:y_max+1, x_min:x_max+1]
+                    time=datetime.datetime.now()
+
+                    time_str = time.strftime("%Y-%m-%d_%H-%M-%S")
+
+                    plt.imsave(f"res/period_corridor_{n}_{time_str}.png", period_img_crop, cmap="gray")
+                
+                n += 1
                 col = colors[period_idx % 2]
 
                 rect = Rectangle(
