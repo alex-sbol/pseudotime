@@ -375,12 +375,16 @@ def visualize_overlay(
                 height = period_bottom - period_top
 
                 if n == 7:
-                #period crop
+                    #TODO elongate crop x axis by 20% in both directions
                     y_min = y0
                     y_max = y1
 
                     x_min = period_start_x
                     x_max = x
+
+                    x_range = x_max - x_min
+                    x_min = max(0, x_min - int(0.2 * x_range))
+                    x_max = min(img.shape[1] - 1, x_max + int(0.2 * x_range))
 
                     period_img_crop = img[y_min:y_max+1, x_min:x_max+1]
                     time=datetime.datetime.now()
