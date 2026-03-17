@@ -25,7 +25,7 @@ def black_mask(img: np.ndarray):
     black = gray < th
     return black
 
-def corridors_from_black_hull(img: np.ndarray, tiny_white_px: int = 16):
+def corridors_from_black_hull(img: np.ndarray, clean_bg_img: np.ndarray = None, tiny_white_px: int = 16):
     blk = black_mask(img)
     hull = morphology.convex_hull_image(blk)
     corridors = (~blk) & hull  # white within hull only
@@ -35,11 +35,11 @@ def corridors_from_black_hull(img: np.ndarray, tiny_white_px: int = 16):
     return corridors.astype(np.uint8), hull.astype(np.uint8)
 
 
-def deskew_with_hull(img: np.ndarray):
-    corr0, hull0 = corridors_from_black_hull(img)
+def deskew_with_hull(img: np.ndarray, clean_bg_img: np.ndarray = None):
+    corr0, hull0 = corridors_from_black_hull(clean_bg_img, clean_bg_img)
     rot_deg, _ = estimate_corridor_angle(corr0)
     #TODO temperly manual degree
-    #rot_deg = -13.47
+    rot_deg = 28.34
     img_rot  = transform.rotate(img,  rot_deg, order=1, preserve_range=True, resize=True).astype(img.dtype)
     corr_rot = transform.rotate(corr0, rot_deg, order=0, preserve_range=True, resize=True).astype(np.uint8)
     hull_rot = transform.rotate(hull0, rot_deg, order=0, preserve_range=True, resize=True).astype(np.uint8)

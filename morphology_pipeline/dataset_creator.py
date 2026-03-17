@@ -8,12 +8,14 @@ from morphology_pipeline.corridor_mask import deskew_with_hull, detect_corridors
 from typing import List, Dict, Tuple
 import numpy as np
 from morphology_pipeline.pseudotime import process_corridors
+from tifffile import imread
+from skimage import transform
 
 
-def create_dataset(background, folder, SD):
+def create_dataset(background, folder, SD, clean_bg_path=None):
     m, L, stride, L_min = 2, 30, 1, 8
 
-    rot_img, corr_mask, hull_mask, rot_deg = deskew_with_hull(background)
+    rot_img, corr_mask, hull_mask, rot_deg = deskew_with_hull(background, clean_bg_path)
     print(f"Deskewed by {rot_deg:.2f} degrees.")
 
     #list of bbox dicts {id, y0, y1, x0, x1}
