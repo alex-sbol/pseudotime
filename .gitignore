@@ -1,0 +1,17 @@
+.git_OLD_DO_NOT_DELETE*/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+.env
+config_local.py
+*.tmp
+*.bak
+*.log

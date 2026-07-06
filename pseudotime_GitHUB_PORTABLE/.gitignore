@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Local config/secrets
+.env
+config_local.py
+
+# Large/generated project folders
+data/
+outputs/
+results/
+checkpoints/
+exports/
+raw/
+intermediate/
+Intermediate/
+GIF/
+
+# Project-specific heavy folders
+pseudotime Cell Profiler segmentations/
+copy_pseudotime_highres_confinement_scan/
+raw FixedPattern 16x16/
+1462_1/
+1476_1/
+*overlays*/
+*Overlay*/
+*validation*/
+
+# Microscopy / heavy scientific files
+*.tif
+*.tiff
+*.czi
+*.nd2
+*.lif
+*.pkl
+*.h5
+*.hdf5
+*.npy
+*.npz
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+
+# Generated images/videos
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.avi
+*.mov
+
+# Generated documents/figures
+*.pdf
+*.svg

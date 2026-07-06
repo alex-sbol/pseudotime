@@ -1,0 +1,8 @@
+--find-links https://download.pytorch.org/whl/cu124
+torch
+torchvision
+torchaudio
+scipy==1.14.1
+matplotlib==3.9.2
+torchcfm==1.0.5
+scikit-image==0.24.0
